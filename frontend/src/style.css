@@ -1,0 +1,270 @@
+@import "tailwindcss";
+
+@layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+    margin: 0;
+  }
+
+  body {
+    @apply bg-slate-100 text-slate-900 antialiased;
+    background:
+      linear-gradient(180deg, #f8fafc 0%, #eef2f7 42%, #f1f5f9 100%);
+    font-family:
+      Inter, Roboto, Arial, sans-serif;
+  }
+
+  a {
+    @apply text-inherit no-underline;
+  }
+}
+
+@layer components {
+  .app-shell {
+    @apply flex min-h-screen bg-slate-100;
+  }
+
+  .app-main {
+    @apply min-w-0 flex-1 p-6 lg:p-8;
+  }
+
+  .app-drawer .MuiDrawer-paper {
+    @apply border-r border-slate-200 bg-white/95 text-slate-900;
+  }
+
+  .app-drawer .MuiToolbar-root {
+    @apply min-h-24 items-start px-5 pt-6;
+  }
+
+  .app-drawer .MuiList-root {
+    @apply px-2 py-3;
+  }
+
+  .app-drawer .MuiListItemIcon-root {
+    @apply min-w-10 text-slate-500;
+  }
+
+  .app-drawer .Mui-selected .MuiListItemIcon-root {
+    @apply text-teal-700;
+  }
+
+  .page-title {
+    @apply text-3xl font-bold tracking-normal text-slate-950;
+  }
+
+  .page-subtitle {
+    @apply mt-1 text-sm text-slate-500;
+  }
+
+  .surface {
+    @apply rounded-xl border border-slate-200 bg-white;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  }
+
+  .surface-pad {
+    @apply rounded-xl border border-slate-200 bg-white p-5;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  }
+
+  .table-surface {
+    @apply overflow-hidden rounded-xl border border-slate-200 bg-white;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  }
+
+  .wizard-shell {
+    @apply rounded-2xl border border-slate-200 bg-white p-5;
+    box-shadow: 0 14px 32px rgba(15, 23, 42, 0.07);
+  }
+
+  .wizard-summary {
+    @apply rounded-xl border border-slate-200 bg-slate-50 p-4;
+  }
+
+  .MuiStepLabel-label {
+    @apply text-sm font-semibold text-slate-500;
+  }
+
+  .MuiStepLabel-label.Mui-active,
+  .MuiStepLabel-label.Mui-completed {
+    @apply text-teal-800;
+  }
+
+  .MuiStepIcon-root.Mui-active,
+  .MuiStepIcon-root.Mui-completed {
+    @apply text-teal-700;
+  }
+
+  .login-page {
+    @apply grid min-h-screen place-items-center bg-slate-100 p-4;
+  }
+
+  .login-card {
+    @apply w-full max-w-md rounded-lg border border-slate-200 bg-white p-8;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+  }
+
+  .metric-card {
+    @apply rounded-xl border border-slate-200 bg-white;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  }
+
+  .MuiButton-containedPrimary {
+    @apply bg-teal-700 text-white;
+  }
+
+  .MuiButton-containedPrimary:hover {
+    @apply bg-teal-800;
+  }
+
+  .MuiButton-outlinedPrimary {
+    @apply border-slate-300 text-slate-700;
+  }
+
+  .MuiButton-outlinedPrimary:hover {
+    @apply border-teal-700 bg-teal-50 text-teal-800;
+  }
+
+  .MuiTableRow-hover:hover {
+    @apply bg-slate-50;
+  }
+
+  .MuiInputLabel-root {
+    @apply text-slate-500;
+  }
+
+  .MuiOutlinedInput-notchedOutline {
+    @apply border-slate-300;
+  }
+
+  .fixed-request {
+    @apply border-l-4 border-l-emerald-700;
+  }
+
+  .org-chart-panel {
+    @apply overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-8;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+  }
+
+  .org-chart {
+    @apply flex min-w-[980px] flex-col items-center;
+  }
+
+  .org-root-card,
+  .org-module-card,
+  .org-person-card {
+    @apply rounded-lg border border-slate-300 bg-white;
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+  }
+
+  .org-root-card {
+    @apply relative z-10 min-h-[170px] w-[330px] p-4;
+  }
+
+  .org-root-card::after {
+    content: "";
+    @apply absolute left-1/2 bottom-[-42px] h-[42px] w-px bg-sky-800;
+  }
+
+  .org-root-title,
+  .org-module-title,
+  .org-person-name {
+    @apply font-semibold leading-tight text-slate-950;
+  }
+
+  .org-root-title {
+    @apply text-[15px];
+  }
+
+  .org-root-role,
+  .org-module-subtitle,
+  .org-person-role {
+    @apply text-[13px] text-slate-700;
+  }
+
+  .org-root-muted {
+    @apply mt-7 text-[13px] text-slate-500;
+  }
+
+  .org-root-stats {
+    @apply mt-3;
+  }
+
+  .org-branches {
+    @apply relative flex w-full items-start justify-center gap-7 pt-[58px];
+  }
+
+  .org-branches::before {
+    content: "";
+    @apply absolute top-[42px] left-[12%] right-[12%] h-px bg-sky-800;
+  }
+
+  .org-branch {
+    @apply relative flex w-[300px] flex-col items-center;
+  }
+
+  .org-branch::before {
+    content: "";
+    @apply absolute top-[-16px] left-1/2 h-4 w-px bg-sky-800;
+  }
+
+  .org-module-card {
+    @apply min-h-[160px] w-[300px] p-4;
+  }
+
+  .org-module-title {
+    @apply text-sm;
+  }
+
+  .org-module-responsible {
+    @apply mt-2 text-[13px] text-slate-500;
+  }
+
+  .org-card-actions {
+    @apply mt-3;
+  }
+
+  .org-card-actions .MuiInputBase-root {
+    @apply bg-white;
+  }
+
+  .org-card-actions .MuiButton-root {
+    @apply min-w-24 whitespace-nowrap;
+  }
+
+  .org-people-grid {
+    @apply relative mt-[22px] grid w-full grid-cols-1 gap-2.5;
+  }
+
+  .org-people-grid::before {
+    content: "";
+    @apply absolute top-[-22px] left-1/2 h-[22px] w-px bg-sky-800;
+  }
+
+  .org-person-card {
+    @apply min-h-[58px] p-3;
+  }
+
+  .org-person-card.vacancy {
+    @apply border-rose-300;
+  }
+
+  .org-person-card.vacancy .org-person-name {
+    @apply text-rose-700;
+  }
+
+  .org-person-name {
+    @apply text-[13px];
+  }
+
+  .org-person-role {
+    @apply mt-2;
+  }
+}
+
+@media (min-width: 1200px) {
+  .org-people-grid {
+    @apply grid-cols-2;
+  }
+}

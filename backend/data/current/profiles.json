@@ -1,0 +1,29 @@
+[
+  {
+    "user_id": "00000000-0000-0000-0000-000000000001",
+    "name": "Анна",
+    "second_name": "Игоревна",
+    "last_name": "Администратор",
+    "phone": "+7 900 000-00-01",
+    "email": "admin@example.local",
+    "max_link": ""
+  },
+  {
+    "user_id": "00000000-0000-0000-0000-000000000002",
+    "name": "Елена",
+    "second_name": "Сергеевна",
+    "last_name": "Экономист",
+    "phone": "+7 900 000-00-02",
+    "email": "economist@example.local",
+    "max_link": ""
+  },
+  {
+    "user_id": "00000000-0000-0000-0000-000000000003",
+    "name": "Иван",
+    "second_name": "Петрович",
+    "last_name": "Сотрудник",
+    "phone": "+7 900 000-00-03",
+    "email": "employee@example.local",
+    "max_link": ""
+  }
+]

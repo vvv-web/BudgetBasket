@@ -1,0 +1,23 @@
+[
+  {
+    "id": "00000000-0000-0000-0000-000000000001",
+    "login": "admin",
+    "password": "admin",
+    "role": "admin",
+    "is_active": true
+  },
+  {
+    "id": "00000000-0000-0000-0000-000000000002",
+    "login": "economist",
+    "password": "economist",
+    "role": "economist",
+    "is_active": true
+  },
+  {
+    "id": "00000000-0000-0000-0000-000000000003",
+    "login": "employee",
+    "password": "employee",
+    "role": "employee",
+    "is_active": true
+  }
+]
