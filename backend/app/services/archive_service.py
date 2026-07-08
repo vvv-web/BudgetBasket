@@ -16,7 +16,7 @@ class ArchiveService:
         require_role(user, "admin")
         archive = self.archive_repo(year)
         requests = self.current_repo.load_all("requests")
-        moved_requests = [item for item in requests if item.get("budget_year", year) == year]
+        moved_requests = list(requests)
         request_ids = {item["id"] for item in moved_requests}
         dds_items = [item for item in self.current_repo.load_all("dds_items") if item["request_id"] in request_ids]
         invest_items = [item for item in self.current_repo.load_all("invest_items") if item["request_id"] in request_ids]

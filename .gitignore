@@ -49,6 +49,10 @@ backend/data/**/*.tmp
 backend/data/**/*.bak
 backend/data/**/*.swp
 
+# Local file storage (uploads, Excel exports, imports)
+storage/
+!storage/.gitkeep
+
 # Docker / local tooling
 docker-data/
 

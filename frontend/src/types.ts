@@ -1,12 +1,11 @@
 export type Role = 'admin' | 'economist' | 'employee';
-export type RequestStatus = 'draft' | 'submitted' | 'in_review' | 'fixed' | 'unfrozen' | 'cancelled';
-export type ItemStatus = 'in_review' | 'rejected' | 'accepted_adjusted' | 'accepted';
+export type RequestStatus = 'draft' | 'on_review' | 'approved' | 'partially_approved' | 'rejected' | 'cancelled';
+export type ItemStatus = 'on_review' | 'rejected' | 'approved_with_changes' | 'approved';
 
 export interface User {
   id: string;
   login: string;
   role: Role;
-  is_active: boolean;
   profile?: Profile;
 }
 
@@ -43,7 +42,6 @@ export interface BudgetRequest {
   unit_id: string;
   sum: number;
   status: RequestStatus;
-  budget_year?: number;
   total_approved_sum?: number;
   summary?: RequestSummary;
 }
@@ -63,9 +61,11 @@ export interface BudgetItem {
   request_id: string;
   dds_id?: string;
   invest_id?: string;
-  category_id: string | null;
+  category_id?: string | null;
   sum_plan: number;
   sum_fact: number | null;
   status: ItemStatus;
   comment: string | null;
 }
+
+export const CLOSED_REQUEST_STATUSES: RequestStatus[] = ['approved', 'partially_approved', 'rejected'];

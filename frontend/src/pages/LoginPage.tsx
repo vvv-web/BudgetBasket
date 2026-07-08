@@ -1,4 +1,4 @@
-import LockIcon from '@mui/icons-material/Lock';
+import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Paper from '@mui/material/Paper';
@@ -28,19 +28,26 @@ export default function LoginPage({ onLogin }: { onLogin: (token: string, user: 
   return (
     <Box className="login-page">
       <Paper component="form" onSubmit={submit} elevation={0} className="login-card">
-        <Stack spacing={2.5}>
-          <Box>
-            <Typography variant="h4" sx={{ fontWeight: 700 }}>BudgetBasket</Typography>
-            <Typography color="text.secondary">Сбор и утверждение бюджетов модулей</Typography>
-          </Box>
-          <TextField label="Логин" value={login} onChange={(event) => setLogin(event.target.value)} autoFocus />
-          <TextField label="Пароль" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-          {error && <Typography color="error">{error}</Typography>}
-          <Button type="submit" size="large" variant="contained" startIcon={<LockIcon />}>
-            Войти
+        <Stack spacing={2.75}>
+          <Stack spacing={2}>
+            <Stack direction="row" spacing={1.5} alignItems="center">
+              <Box className="brand-mark">BB</Box>
+              <Box>
+                <Typography variant="h5">BudgetBasket</Typography>
+                <Typography color="text.secondary" variant="body2">
+                  Бюджетирование модулей
+                </Typography>
+              </Box>
+            </Stack>
+          </Stack>
+          <TextField label="Логин" value={login} onChange={(event) => setLogin(event.target.value)} autoFocus fullWidth />
+          <TextField label="Пароль" type="password" value={password} onChange={(event) => setPassword(event.target.value)} fullWidth />
+          {error && <Typography color="error" variant="body2">{error}</Typography>}
+          <Button type="submit" size="large" variant="contained" startIcon={<LockOutlinedIcon />}>
+            Войти в систему
           </Button>
-          <Typography variant="body2" color="text.secondary">
-            Тестовые учетные записи: admin/admin, economist/economist, employee/employee
+          <Typography variant="caption" color="text.secondary">
+            Демо-доступ: admin/admin · economist/economist · employee/employee
           </Typography>
         </Stack>
       </Paper>

@@ -1,5 +1,6 @@
 import AddIcon from '@mui/icons-material/Add';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import Alert from '@mui/material/Alert';
 import Button from '@mui/material/Button';
 import MenuItem from '@mui/material/MenuItem';
@@ -21,6 +22,8 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { RequestStatusBadge } from '../components/StatusBadge';
 import type { BudgetRequest, Unit, User } from '../types';
+import { CLOSED_REQUEST_STATUSES } from '../types';
+import { downloadBlob } from '../utils/download';
 import { money, requestStatusLabels } from '../utils/labels';
 
 interface Responsible {
@@ -37,6 +40,7 @@ export default function RequestsPage({ user }: { user: User }) {
   const [filters, setFilters] = useState({ status: '', unit_id: '' });
   const [wizardStep, setWizardStep] = useState(0);
   const [newRequest, setNewRequest] = useState({ unit_id: '' });
+  const [exportError, setExportError] = useState('');
   const { data: units = [] } = useQuery({ queryKey: ['units'], queryFn: async () => (await api.get<Unit[]>('/units')).data });
   const { data = [] } = useQuery({
     queryKey: ['requests', filters],
@@ -58,6 +62,8 @@ export default function RequestsPage({ user }: { user: User }) {
   }, [allModules, responsibleQueries, user.id, user.role]);
 
   const selectedModule = employeeModules.find((unit) => unit.id === newRequest.unit_id);
+  const closedCount = data.filter((item) => CLOSED_REQUEST_STATUSES.includes(item.status)).length;
+
   const create = useMutation({
     mutationFn: () => api.post<BudgetRequest>('/requests', newRequest),
     onSuccess: (response) => {
@@ -66,12 +72,22 @@ export default function RequestsPage({ user }: { user: User }) {
     },
   });
 
+  const exportClosed = async () => {
+    setExportError('');
+    try {
+      const response = await api.get('/requests/export/closed', {
+        params: { unit_id: filters.unit_id || undefined },
+        responseType: 'blob',
+      });
+      downloadBlob(response.data, 'closed_requests.xlsx');
+    } catch {
+      setExportError('Нет закрытых заявок для экспорта или недостаточно прав.');
+    }
+  };
+
   return (
     <Stack spacing={3}>
-      <div>
-        <Typography className="page-title">Заявки</Typography>
-        <Typography className="page-subtitle">Форма показывает только модули, доступные текущей роли по обновленной data-схеме.</Typography>
-      </div>
+      {exportError && <Alert severity="warning">{exportError}</Alert>}
 
       {user.role === 'employee' && (
         <Paper className="wizard-shell" elevation={0}>
@@ -79,7 +95,7 @@ export default function RequestsPage({ user }: { user: User }) {
             <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={2}>
               <div>
                 <Typography variant="h6">Новая заявка</Typography>
-                <Typography color="text.secondary">Сотрудник может создать заявку только по модулю, где он назначен активным ответственным.</Typography>
+                <Typography color="text.secondary">Сотрудник создаёт заявку по модулю, где он назначен ответственным.</Typography>
               </div>
               <Button startIcon={<AddIcon />} variant="outlined" onClick={() => setWizardStep(0)}>
                 Начать заново
@@ -97,7 +113,7 @@ export default function RequestsPage({ user }: { user: User }) {
               <Alert severity="warning">У текущего сотрудника нет активных ответственных модулей. Назначьте ответственного в оргструктуре.</Alert>
             )}
             {create.isError && (
-              <Alert severity="error">Заявку не удалось создать. Проверьте, что выбранный модуль закреплен за текущим сотрудником.</Alert>
+              <Alert severity="error">Заявку не удалось создать. Проверьте, что выбранный модуль закреплён за текущим сотрудником.</Alert>
             )}
 
             {wizardStep === 0 && (
@@ -114,7 +130,9 @@ export default function RequestsPage({ user }: { user: User }) {
               <Stack spacing={2}>
                 <Paper className="wizard-summary" elevation={0}>
                   <Typography><b>Модуль:</b> {selectedModule?.name}</Typography>
-                  <Typography color="text.secondary">Будет создана запись `requests` с полями `id`, `economist_id`, `unit_id`, `sum`, `status`.</Typography>
+                  <Typography color="text.secondary" variant="body2" sx={{ mt: 0.5 }}>
+                    После создания откроется мастер заполнения строк. Статьи НСИ подтянутся по подразделению модуля.
+                  </Typography>
                 </Paper>
                 <Stack direction="row" spacing={1}>
                   <Button variant="outlined" onClick={() => setWizardStep(0)}>Назад</Button>
@@ -129,15 +147,20 @@ export default function RequestsPage({ user }: { user: User }) {
       )}
 
       <Paper className="surface-pad" elevation={0}>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-          <TextField select label="Статус" value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })} sx={{ minWidth: 220 }}>
-            <MenuItem value="">Все</MenuItem>
-            {Object.entries(requestStatusLabels).map(([value, label]) => <MenuItem key={value} value={value}>{label}</MenuItem>)}
-          </TextField>
-          <TextField select label="Модуль" value={filters.unit_id} onChange={(event) => setFilters({ ...filters, unit_id: event.target.value })} sx={{ minWidth: 260 }}>
-            <MenuItem value="">Все</MenuItem>
-            {allModules.map((unit) => <MenuItem key={unit.id} value={unit.id}>{unit.name}</MenuItem>)}
-          </TextField>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }} justifyContent="space-between">
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ flex: 1 }}>
+            <TextField select label="Статус" value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })} sx={{ minWidth: 220 }}>
+              <MenuItem value="">Все</MenuItem>
+              {Object.entries(requestStatusLabels).map(([value, label]) => <MenuItem key={value} value={value}>{label}</MenuItem>)}
+            </TextField>
+            <TextField select label="Модуль" value={filters.unit_id} onChange={(event) => setFilters({ ...filters, unit_id: event.target.value })} sx={{ minWidth: 260 }}>
+              <MenuItem value="">Все</MenuItem>
+              {allModules.map((unit) => <MenuItem key={unit.id} value={unit.id}>{unit.name}</MenuItem>)}
+            </TextField>
+          </Stack>
+          <Button startIcon={<FileDownloadIcon />} variant="outlined" onClick={exportClosed} disabled={closedCount === 0 && !CLOSED_REQUEST_STATUSES.includes(filters.status as typeof CLOSED_REQUEST_STATUSES[number])}>
+            Экспорт закрытых
+          </Button>
         </Stack>
       </Paper>
 
@@ -154,7 +177,7 @@ export default function RequestsPage({ user }: { user: User }) {
           </TableHead>
           <TableBody>
             {data.map((item) => (
-              <TableRow key={item.id} hover onClick={() => navigate(`/requests/${item.id}`)} sx={{ cursor: 'pointer' }} className={item.status === 'fixed' ? 'fixed-request' : ''}>
+              <TableRow key={item.id} hover onClick={() => navigate(`/requests/${item.id}`)} sx={{ cursor: 'pointer' }} className={CLOSED_REQUEST_STATUSES.includes(item.status) ? 'fixed-request' : ''}>
                 <TableCell>{units.find((unit) => unit.id === item.unit_id)?.name || item.unit_id}</TableCell>
                 <TableCell><RequestStatusBadge status={item.status} /></TableCell>
                 <TableCell>{money(item.summary?.planned_sum)}</TableCell>

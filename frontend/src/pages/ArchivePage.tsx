@@ -8,7 +8,6 @@ import TableCell from '@mui/material/TableCell';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import TextField from '@mui/material/TextField';
-import Typography from '@mui/material/Typography';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api } from '../api/client';
@@ -24,21 +23,27 @@ export default function ArchivePage() {
 
   return (
     <Stack spacing={3}>
-      <Typography className="page-title">Архив</Typography>
       <Paper className="surface-pad" elevation={0}>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }}>
           <TextField label="Год" type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} />
           <Button startIcon={<ArchiveIcon />} variant="contained" onClick={() => archive.mutate()}>Архивировать год</Button>
         </Stack>
       </Paper>
       <Paper className="table-surface" elevation={0}>
         <Table size="small">
-          <TableHead><TableRow><TableCell>ID</TableCell><TableCell>Год</TableCell><TableCell>Статус</TableCell><TableCell>Утверждено</TableCell></TableRow></TableHead>
+          <TableHead>
+            <TableRow>
+              <TableCell>ID</TableCell>
+              <TableCell>Год</TableCell>
+              <TableCell>Статус</TableCell>
+              <TableCell>Утверждено</TableCell>
+            </TableRow>
+          </TableHead>
           <TableBody>
             {data.map((request) => (
-              <TableRow key={request.id}>
+              <TableRow key={request.id} hover>
                 <TableCell>{request.id}</TableCell>
-                <TableCell>{request.budget_year || year}</TableCell>
+                <TableCell>{year}</TableCell>
                 <TableCell><RequestStatusBadge status={request.status} /></TableCell>
                 <TableCell>{money(request.sum)}</TableCell>
               </TableRow>

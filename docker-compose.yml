@@ -7,10 +7,12 @@ services:
     environment:
       BUDGET_DATA_ROOT: /app/data
       BUDGET_DATA_DIR: /app/data/current
-      BUDGET_UPLOAD_DIR: /app/uploads
+      BUDGET_STORAGE_DIR: /app/storage
+      BUDGET_UPLOAD_DIR: /app/storage/uploads
+      BUDGET_EXPORT_DIR: /app/storage/exports
     volumes:
       - ./backend/data:/app/data
-      - ./backend/uploads:/app/uploads
+      - ./storage:/app/storage
 
   frontend:
     build:

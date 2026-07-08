@@ -13,17 +13,41 @@ import List from '@mui/material/List';
 import ListItemButton from '@mui/material/ListItemButton';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
+import Stack from '@mui/material/Stack';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import type { User } from '../types';
 import { roleLabels } from '../utils/labels';
+import { AppBreadcrumbs } from './AppBreadcrumbs';
 
-const drawerWidth = 268;
+const drawerWidth = 280;
+
+const PageActionsContext = createContext<{
+  setActions: (node: ReactNode) => void;
+} | null>(null);
+
+export function usePageChromeActions(actions: ReactNode) {
+  const ctx = useContext(PageActionsContext);
+  useEffect(() => {
+    if (!ctx) return undefined;
+    ctx.setActions(actions);
+    return () => ctx.setActions(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- actions identity is managed by callers via useMemo
+  }, [ctx, actions]);
+}
 
 export function Layout({ user, onLogout }: { user: User; onLogout: () => void }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const [actions, setActions] = useState<ReactNode>(null);
+  const chrome = useMemo(() => ({ setActions }), []);
+
+  useEffect(() => {
+    setActions(null);
+  }, [location.pathname]);
+
   const items = [
     { label: 'Сводка', to: '/', icon: <DashboardIcon /> },
     { label: 'Заявки', to: '/requests', icon: <FolderIcon /> },
@@ -32,7 +56,7 @@ export function Layout({ user, onLogout }: { user: User; onLogout: () => void })
       ? [
           { label: 'Пользователи', to: '/users', icon: <PeopleIcon /> },
           { label: 'Оргструктура', to: '/units', icon: <SchemaIcon /> },
-          { label: 'Справочники', to: '/catalogs', icon: <MenuBookIcon /> },
+          { label: 'НСИ', to: '/catalogs', icon: <MenuBookIcon /> },
         ]
       : []),
   ];
@@ -41,21 +65,35 @@ export function Layout({ user, onLogout }: { user: User; onLogout: () => void })
     <Box className="app-shell">
       <Drawer className="app-drawer" variant="permanent" sx={{ width: drawerWidth, '& .MuiDrawer-paper': { width: drawerWidth, boxSizing: 'border-box' } }}>
         <Toolbar>
-          <Box>
-            <Typography variant="h6" sx={{ fontWeight: 700 }}>BudgetBasket</Typography>
-            <Typography variant="body2" color="text.secondary">
-              {user.login} · {roleLabels[user.role]}
-            </Typography>
-          </Box>
+          <Stack spacing={1.75} sx={{ width: '100%' }}>
+            <Stack direction="row" spacing={1.5} alignItems="center">
+              <Box className="brand-mark">BB</Box>
+              <Box>
+                <Typography sx={{ fontFamily: '"Plus Jakarta Sans", sans-serif', fontWeight: 700, letterSpacing: '-0.03em' }}>
+                  BudgetBasket
+                </Typography>
+                <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: 12 }}>
+                  Бюджетирование модулей
+                </Typography>
+              </Box>
+            </Stack>
+            <Box sx={{ borderRadius: 3, px: 1.5, py: 1.15, bgcolor: 'rgba(244, 246, 250, 0.9)', border: '1px solid #E5E7EB' }}>
+              <Typography variant="body2" sx={{ fontWeight: 700, letterSpacing: '-0.01em' }}>{user.login}</Typography>
+              <Typography variant="caption" color="text.secondary">{roleLabels[user.role]}</Typography>
+            </Box>
+          </Stack>
         </Toolbar>
         <Divider />
         <List>
-          {items.map((item) => (
-            <ListItemButton key={item.to} selected={location.pathname === item.to} onClick={() => navigate(item.to)}>
-              <ListItemIcon>{item.icon}</ListItemIcon>
-              <ListItemText primary={item.label} />
-            </ListItemButton>
-          ))}
+          {items.map((item) => {
+            const selected = item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to);
+            return (
+              <ListItemButton key={item.to} selected={selected} onClick={() => navigate(item.to)}>
+                <ListItemIcon>{item.icon}</ListItemIcon>
+                <ListItemText primary={item.label} />
+              </ListItemButton>
+            );
+          })}
         </List>
         <Box sx={{ flex: 1 }} />
         <Box sx={{ p: 2 }}>
@@ -65,7 +103,23 @@ export function Layout({ user, onLogout }: { user: User; onLogout: () => void })
         </Box>
       </Drawer>
       <Box component="main" className="app-main">
-        <Outlet />
+        <Stack
+          className="page-chrome"
+          direction={{ xs: 'column', sm: 'row' }}
+          justifyContent="space-between"
+          alignItems={{ xs: 'stretch', sm: 'center' }}
+          spacing={2}
+        >
+          <AppBreadcrumbs />
+          {actions ? (
+            <Stack direction="row" spacing={1.25} flexWrap="wrap" useFlexGap className="page-actions">
+              {actions}
+            </Stack>
+          ) : null}
+        </Stack>
+        <PageActionsContext.Provider value={chrome}>
+          <Outlet />
+        </PageActionsContext.Provider>
       </Box>
     </Box>
   );

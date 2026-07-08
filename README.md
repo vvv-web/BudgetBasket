@@ -66,16 +66,17 @@ npm test
 
 ## Структура данных
 
-- `backend/data/current/` - активные JSON-коллекции
-- `backend/data/archive/{year}/` - архив заявок по годам
-- `backend/uploads/` - загруженные файлы
+- `backend/db/init.sql` — каноническая PostgreSQL-схема
+- `backend/data/current/` — активные JSON-коллекции MVP
+- `backend/data/archive/{year}/` — архив заявок по годам
+- `storage/` — локальные uploads/exports
 
 ## Ограничения MVP
 
 - Пароли хранятся в открытом виде только для прототипа
 - Токены живут в памяти backend-процесса и сбрасываются после перезапуска
 - JSON-хранилище не рассчитано на высокую конкурентную запись
-- `file_guard`, PostgreSQL и SeaweedFS специально не подключены
+- PostgreSQL и SeaweedFS пока не подключены; схема готова в `backend/db/init.sql`
 
 ## Путь к будущей замене
 

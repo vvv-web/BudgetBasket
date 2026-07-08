@@ -1,8 +1,11 @@
 import AttachFileIcon from '@mui/icons-material/AttachFile';
 import DoneAllIcon from '@mui/icons-material/DoneAll';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import SendIcon from '@mui/icons-material/Send';
 import UndoIcon from '@mui/icons-material/Undo';
+import Autocomplete from '@mui/material/Autocomplete';
+import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
@@ -23,40 +26,109 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../api/client';
+import { PageActions } from '../components/PageActions';
 import { ItemStatusBadge, RequestStatusBadge } from '../components/StatusBadge';
 import type { BudgetItem, BudgetRequest, CatalogItem, ItemStatus, User } from '../types';
+import { CLOSED_REQUEST_STATUSES } from '../types';
+import { downloadBlob } from '../utils/download';
 import { itemStatusLabels, money } from '../utils/labels';
 
 const steps = ['Сводка', 'ДДС', 'Инвест-проекты', 'Проверка'];
 
-function AddItemForm({ kind, requestId, catalog, disabled }: { kind: 'dds' | 'invest'; requestId: string; catalog: CatalogItem[]; disabled: boolean }) {
+function catalogLabel(item: CatalogItem, catalog: CatalogItem[]) {
+  const parent = catalog.find((entry) => entry.id === item.parent_id);
+  return parent ? `${parent.name} / ${item.name}` : item.name;
+}
+
+function leafItems(catalog: CatalogItem[]) {
+  const hasChildren = new Set(catalog.filter((item) => item.parent_id).map((item) => item.parent_id));
+  // Prefer actual children (subcategories). If a root has no children, keep it selectable.
+  const children = catalog.filter((item) => item.parent_id);
+  if (children.length > 0) {
+    return children;
+  }
+  return catalog.filter((item) => !hasChildren.has(item.id));
+}
+
+function categoryName(catalog: CatalogItem[], itemId?: string | null) {
+  const item = catalog.find((entry) => entry.id === itemId);
+  if (!item?.parent_id) return '—';
+  return catalog.find((entry) => entry.id === item.parent_id)?.name || '—';
+}
+
+function AddItemForm({
+  kind,
+  requestId,
+  catalog,
+  disabled,
+}: {
+  kind: 'dds' | 'invest';
+  requestId: string;
+  catalog: CatalogItem[];
+  disabled: boolean;
+}) {
   const queryClient = useQueryClient();
-  const [form, setForm] = useState({ id: '', sum_plan: 0 });
+  const options = useMemo(() => leafItems(catalog), [catalog]);
+  const [article, setArticle] = useState<CatalogItem | null>(null);
+  const [sumPlan, setSumPlan] = useState(0);
   const create = useMutation({
-    mutationFn: () => api.post(`/requests/${requestId}/${kind}-items`, { [kind === 'dds' ? 'dds_id' : 'invest_id']: form.id, sum_plan: form.sum_plan }),
+    mutationFn: () =>
+      api.post(`/requests/${requestId}/${kind}-items`, {
+        [kind === 'dds' ? 'dds_id' : 'invest_id']: article?.id,
+        sum_plan: sumPlan,
+      }),
     onSuccess: () => {
-      setForm({ id: '', sum_plan: 0 });
+      setArticle(null);
+      setSumPlan(0);
       queryClient.invalidateQueries({ queryKey: ['request-details', requestId] });
     },
   });
+
   return (
-    <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ my: 2 }}>
-      <TextField select label={kind === 'dds' ? 'Статья ДДС' : 'Инвест-проект'} value={form.id} onChange={(event) => setForm({ ...form, id: event.target.value })} disabled={disabled} sx={{ minWidth: 280 }}>
-        {catalog.map((item) => <MenuItem key={item.id} value={item.id}>{item.name}</MenuItem>)}
-      </TextField>
-      <TextField label="Плановая сумма" type="number" value={form.sum_plan} onChange={(event) => setForm({ ...form, sum_plan: Number(event.target.value) })} disabled={disabled} />
-      <Button variant="contained" onClick={() => create.mutate()} disabled={disabled || !form.id || form.sum_plan <= 0}>
+    <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2} sx={{ my: 2 }} alignItems={{ lg: 'center' }}>
+      <Autocomplete
+        options={options}
+        groupBy={(option) => catalog.find((entry) => entry.id === option.parent_id)?.name || 'Без категории'}
+        value={article}
+        onChange={(_, value) => setArticle(value)}
+        getOptionLabel={(item) => catalogLabel(item, catalog)}
+        disabled={disabled}
+        sx={{ minWidth: 360, flex: 1 }}
+        renderInput={(params) => (
+          <TextField
+            {...params}
+            label={kind === 'dds' ? 'Статья ДДС' : 'Инвест-проект'}
+            placeholder="Поиск по категориям НСИ подразделения"
+          />
+        )}
+      />
+      <TextField label="Плановая сумма" type="number" value={sumPlan} onChange={(event) => setSumPlan(Number(event.target.value))} disabled={disabled} sx={{ minWidth: 160 }} />
+      <Button variant="contained" onClick={() => create.mutate()} disabled={disabled || !article || sumPlan <= 0 || create.isPending}>
         Добавить строку
       </Button>
     </Stack>
   );
 }
 
-function ItemsTable({ title, kind, request, user, items, catalog }: { title: string; kind: 'dds' | 'invest'; request: BudgetRequest; user: User; items: BudgetItem[]; catalog: CatalogItem[] }) {
+function ItemsTable({
+  title,
+  kind,
+  request,
+  user,
+  items,
+  catalog,
+}: {
+  title: string;
+  kind: 'dds' | 'invest';
+  request: BudgetRequest;
+  user: User;
+  items: BudgetItem[];
+  catalog: CatalogItem[];
+}) {
   const queryClient = useQueryClient();
   const [drafts, setDrafts] = useState<Record<string, Partial<BudgetItem>>>({});
-  const disabledForEmployee = user.role !== 'employee' || !['draft', 'unfrozen'].includes(request.status);
-  const canEconomist = user.role === 'economist' && request.status !== 'fixed';
+  const disabledForEmployee = user.role !== 'employee' || request.status !== 'draft';
+  const canEconomist = user.role === 'economist' && request.status === 'on_review';
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['request-details', request.id] });
   const patch = useMutation({ mutationFn: ({ id, body }: { id: string; body: Partial<BudgetItem> }) => api.patch(`/${kind}-items/${id}`, body), onSuccess: refresh });
   const upload = useMutation({
@@ -74,14 +146,19 @@ function ItemsTable({ title, kind, request, user, items, catalog }: { title: str
       <Stack spacing={1}>
         <Typography variant="h6">{title}</Typography>
         <Typography color="text.secondary">
-          {user.role === 'economist' ? 'Проверьте строки, укажите статус, утвержденную сумму и комментарий.' : 'Добавьте строки бюджета и приложите подтверждающие файлы.'}
+          {user.role === 'economist'
+            ? 'Проверьте строки, укажите статус, утверждённую сумму и комментарий.'
+            : 'Выберите подкатегорию НСИ подразделения: статья ДДС или инвест-проект внутри категории.'}
         </Typography>
       </Stack>
-      {user.role === 'employee' && <AddItemForm kind={kind} requestId={request.id} catalog={catalog} disabled={disabledForEmployee} />}
+      {user.role === 'employee' && (
+        <AddItemForm kind={kind} requestId={request.id} catalog={catalog} disabled={disabledForEmployee} />
+      )}
       <Table size="small">
         <TableHead>
           <TableRow>
-            <TableCell>Статья</TableCell>
+            <TableCell>Категория</TableCell>
+            <TableCell>{kind === 'dds' ? 'Статья ДДС' : 'Инвест-проект'}</TableCell>
             <TableCell>План</TableCell>
             <TableCell>Статус</TableCell>
             <TableCell>Утверждено</TableCell>
@@ -96,6 +173,7 @@ function ItemsTable({ title, kind, request, user, items, catalog }: { title: str
             const catalogId = kind === 'dds' ? item.dds_id : item.invest_id;
             return (
               <TableRow key={item.id}>
+                <TableCell>{categoryName(catalog, catalogId)}</TableCell>
                 <TableCell>{catalog.find((entry) => entry.id === catalogId)?.name || catalogId}</TableCell>
                 <TableCell>{money(item.sum_plan)}</TableCell>
                 <TableCell>
@@ -139,32 +217,50 @@ export default function RequestDetailsPage({ user }: { user: User }) {
   const { data: request } = useQuery({ queryKey: detailsKey, queryFn: async () => (await api.get<BudgetRequest>(`/requests/${id}`)).data });
   const { data: dds = [] } = useQuery({ queryKey: [...detailsKey, 'dds'], queryFn: async () => (await api.get<BudgetItem[]>(`/requests/${id}/dds-items`)).data, enabled: !!request });
   const { data: invest = [] } = useQuery({ queryKey: [...detailsKey, 'invest'], queryFn: async () => (await api.get<BudgetItem[]>(`/requests/${id}/invest-items`)).data, enabled: !!request });
-  const { data: ddsCatalog = [] } = useQuery({ queryKey: ['dds-catalog'], queryFn: async () => (await api.get<CatalogItem[]>('/catalog/dds')).data });
-  const { data: investCatalog = [] } = useQuery({ queryKey: ['invest-catalog'], queryFn: async () => (await api.get<CatalogItem[]>('/catalog/invests')).data });
+
+  const moduleId = request?.unit_id;
+  const catalogParams = { module_id: moduleId, active_only: true };
+  const { data: ddsCatalog = [] } = useQuery({
+    queryKey: ['dds-catalog', moduleId],
+    queryFn: async () => (await api.get<CatalogItem[]>('/catalog/dds', { params: catalogParams })).data,
+    enabled: !!moduleId,
+  });
+  const { data: investCatalog = [] } = useQuery({
+    queryKey: ['invest-catalog', moduleId],
+    queryFn: async () => (await api.get<CatalogItem[]>('/catalog/invests', { params: catalogParams })).data,
+    enabled: !!moduleId,
+  });
+
   const lifecycle = useMutation({ mutationFn: (action: string) => api.post(`/requests/${id}/${action}`), onSuccess: () => queryClient.invalidateQueries({ queryKey: detailsKey }) });
 
   const allItems = useMemo(() => [...dds, ...invest], [dds, invest]);
-  const canSubmit = user.role === 'employee' && request && ['draft', 'unfrozen'].includes(request.status) && allItems.length > 0;
-  const canReview = user.role === 'economist' && request && ['submitted', 'unfrozen', 'in_review'].includes(request.status);
-  const canFix = user.role === 'economist' && request && request.status !== 'fixed' && allItems.length > 0 && allItems.every((item) => item.status !== 'in_review');
+  const canSubmit = user.role === 'employee' && request && request.status === 'draft' && allItems.length > 0;
+  const canReview = user.role === 'economist' && request && request.status === 'on_review';
+  const canFinalize = user.role === 'economist' && request && request.status === 'on_review' && allItems.length > 0 && allItems.every((item) => item.status !== 'on_review');
+  const isClosed = !!request && CLOSED_REQUEST_STATUSES.includes(request.status);
+
+  const exportRequest = async () => {
+    const response = await api.get(`/requests/${id}/export`, { responseType: 'blob' });
+    downloadBlob(response.data, `request_${id.slice(0, 8)}.xlsx`);
+  };
 
   if (!request) return <Typography>Загрузка заявки...</Typography>;
 
   return (
     <Stack spacing={3}>
-      <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={2}>
-        <div>
-          <Typography className="page-title">Мастер заявки</Typography>
-          <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
-            <RequestStatusBadge status={request.status} />
-            {request.status === 'fixed' && <Typography color="success.main">Заявка зафиксирована и недоступна для редактирования</Typography>}
-          </Stack>
-        </div>
-        <Stack direction="row" spacing={1} flexWrap="wrap">
-          {canReview && <Button startIcon={<PlayArrowIcon />} variant="outlined" onClick={() => lifecycle.mutate('start-review')}>Начать проверку</Button>}
-          {canFix && <Button startIcon={<DoneAllIcon />} variant="contained" onClick={() => lifecycle.mutate('fix')}>Зафиксировать</Button>}
-          {user.role === 'economist' && request.status === 'fixed' && <Button startIcon={<UndoIcon />} variant="outlined" onClick={() => lifecycle.mutate('unfreeze')}>Разморозить</Button>}
-        </Stack>
+      <PageActions>
+        {isClosed && (
+          <Button startIcon={<FileDownloadIcon />} variant="outlined" onClick={exportRequest}>
+            Экспорт Excel
+          </Button>
+        )}
+        {canReview && !canFinalize && <Button startIcon={<PlayArrowIcon />} variant="outlined" onClick={() => lifecycle.mutate('start-review')}>Начать проверку</Button>}
+        {canFinalize && <Button startIcon={<DoneAllIcon />} variant="contained" onClick={() => lifecycle.mutate('finalize')}>Завершить проверку</Button>}
+        {user.role === 'economist' && isClosed && <Button startIcon={<UndoIcon />} variant="outlined" onClick={() => lifecycle.mutate('reopen')}>Вернуть в черновик</Button>}
+      </PageActions>
+      <Stack direction="row" spacing={1} alignItems="center">
+        <RequestStatusBadge status={request.status} />
+        {isClosed && <Typography color="success.main" variant="body2">Заявка закрыта и недоступна для редактирования</Typography>}
       </Stack>
 
       <Paper className="wizard-shell" elevation={0}>
@@ -178,11 +274,11 @@ export default function RequestDetailsPage({ user }: { user: User }) {
           </Stepper>
 
           {activeStep === 0 && (
-            <Card className={`metric-card ${request.status === 'fixed' ? 'fixed-request' : ''}`} elevation={0}>
+            <Card className={`metric-card ${isClosed ? 'fixed-request' : ''}`} elevation={0}>
               <CardContent>
                 <Stack spacing={3}>
                   <Typography variant="h6">Сводка перед заполнением</Typography>
-                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={4}>
+                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={4} flexWrap="wrap">
                     <Typography>План: <b>{money(request.summary?.planned_sum)}</b></Typography>
                     <Typography>Утверждено: <b>{money(request.summary?.approved_sum)}</b></Typography>
                     <Typography>Строк: <b>{request.summary?.items_count || 0}</b></Typography>
@@ -201,7 +297,7 @@ export default function RequestDetailsPage({ user }: { user: User }) {
               <Stack spacing={2}>
                 <Typography variant="h6">Финальная проверка</Typography>
                 <Typography color="text.secondary">
-                  Проверьте количество строк и статусы. Сотрудник отправляет заявку экономисту, экономист фиксирует бюджет после обработки всех строк.
+                  Проверьте количество строк и статусы. Сотрудник отправляет заявку экономисту, экономист завершает проверку после обработки всех строк.
                 </Typography>
                 <Stack direction={{ xs: 'column', md: 'row' }} spacing={3}>
                   <Typography>Всего строк: <b>{allItems.length}</b></Typography>
@@ -210,7 +306,7 @@ export default function RequestDetailsPage({ user }: { user: User }) {
                 </Stack>
                 <Stack direction="row" spacing={1}>
                   {canSubmit && <Button startIcon={<SendIcon />} variant="contained" onClick={() => lifecycle.mutate('submit')}>Отправить заявку</Button>}
-                  {canFix && <Button startIcon={<DoneAllIcon />} variant="contained" onClick={() => lifecycle.mutate('fix')}>Зафиксировать бюджет</Button>}
+                  {canFinalize && <Button startIcon={<DoneAllIcon />} variant="contained" onClick={() => lifecycle.mutate('finalize')}>Завершить проверку</Button>}
                 </Stack>
               </Stack>
             </Paper>

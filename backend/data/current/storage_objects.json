@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "id": 1,
+    "storage_bucket": "local",
+    "storage_key": "f847c32a9372740b3fb070589a2a039a000292d9c4fb7300208bab0355e5725e.jpeg",
+    "content_sha256": "f847c32a9372740b3fb070589a2a039a000292d9c4fb7300208bab0355e5725e",
+    "mime_type": "image/jpeg",
+    "size_bytes": 48389
+  }
+]

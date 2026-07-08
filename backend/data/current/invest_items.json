@@ -3,10 +3,10 @@
     "id": "90000000-0000-0000-0000-000000000001",
     "request_id": "40000000-0000-0000-0000-000000000001",
     "invest_id": "30000000-0000-0000-0000-000000000001",
-    "category_id": null,
+    "category_id": "30000000-0000-0000-0000-000000000010",
     "sum_plan": 350000,
     "sum_fact": 200500.0,
-    "status": "accepted_adjusted",
+    "status": "approved_with_changes",
     "comment": null
   }
 ]

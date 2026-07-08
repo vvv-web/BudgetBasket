@@ -17,18 +17,23 @@ class UnitType(StrEnum):
 
 class RequestStatus(StrEnum):
     draft = "draft"
-    submitted = "submitted"
-    in_review = "in_review"
-    fixed = "fixed"
-    unfrozen = "unfrozen"
+    on_review = "on_review"
+    approved = "approved"
+    partially_approved = "partially_approved"
+    rejected = "rejected"
     cancelled = "cancelled"
 
 
 class ItemStatus(StrEnum):
-    in_review = "in_review"
+    on_review = "on_review"
     rejected = "rejected"
-    accepted_adjusted = "accepted_adjusted"
-    accepted = "accepted"
+    approved_with_changes = "approved_with_changes"
+    approved = "approved"
+
+
+CLOSED_REQUEST_STATUSES = {RequestStatus.approved, RequestStatus.partially_approved, RequestStatus.rejected}
+EDITABLE_REQUEST_STATUSES = {RequestStatus.draft}
+APPROVED_ITEM_STATUSES = {ItemStatus.approved, ItemStatus.approved_with_changes}
 
 
 class LoginIn(BaseModel):
@@ -40,13 +45,17 @@ class UserCreate(BaseModel):
     login: str
     password: str
     role: Role
-    is_active: bool = True
+    name: str | None = None
+    second_name: str | None = None
+    last_name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    max_link: str | None = None
 
 
 class UserPatch(BaseModel):
     password: str | None = None
     role: Role | None = None
-    is_active: bool | None = None
 
 
 class ProfilePatch(BaseModel):
@@ -85,15 +94,15 @@ class AssignmentCreate(BaseModel):
 
 class CatalogCreate(BaseModel):
     parent_id: str | None = None
+    unit_id: str | None = None
     name: str
-    code: str | None = None
     is_active: bool = True
 
 
 class CatalogPatch(BaseModel):
     parent_id: str | None = None
+    unit_id: str | None = None
     name: str | None = None
-    code: str | None = None
     is_active: bool | None = None
 
 
@@ -114,25 +123,21 @@ class MappingPatch(BaseModel):
 
 class RequestCreate(BaseModel):
     unit_id: str
-    budget_year: int | None = Field(default=None, ge=2000, le=2100)
 
 
 class RequestPatch(BaseModel):
-    budget_year: int | None = Field(default=None, ge=2000, le=2100)
     status: RequestStatus | None = None
 
 
 class ItemCreate(BaseModel):
     dds_id: str | None = None
     invest_id: str | None = None
-    category_id: str | None = None
     sum_plan: float = Field(ge=0)
 
 
 class ItemPatch(BaseModel):
     dds_id: str | None = None
     invest_id: str | None = None
-    category_id: str | None = None
     sum_plan: float | None = Field(default=None, ge=0)
     sum_fact: float | None = Field(default=None, ge=0)
     status: ItemStatus | None = None

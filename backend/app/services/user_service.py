@@ -20,8 +20,11 @@ class UserService:
         require_role(current_user, "admin")
         if any(item["login"] == payload["login"] for item in self.repo.load_all("users")):
             raise HTTPException(status_code=400, detail="Логин уже используется")
-        user = self.repo.create("users", payload)
-        profile = {"user_id": user["id"], **EMPTY_PROFILE}
+        profile_fields = ("name", "second_name", "last_name", "phone", "email", "max_link")
+        profile_data = {key: (payload.get(key) or "").strip() for key in profile_fields}
+        user_payload = {key: payload[key] for key in ("login", "password", "role")}
+        user = self.repo.create("users", user_payload)
+        profile = {"user_id": user["id"], **EMPTY_PROFILE, **profile_data}
         self.repo.save_all("profiles", [*self.repo.load_all("profiles"), profile])
         return {**public_user(user), "profile": profile}
 

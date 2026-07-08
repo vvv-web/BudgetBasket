@@ -1,7 +1,9 @@
 from typing import Annotated
 
+from io import BytesIO
+
 from fastapi import APIRouter, Depends, File, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from app.dependencies import current_user
 from app.models import (
@@ -109,9 +111,25 @@ def deactivate_assignment(request: Request, assignment_id: str, user: User):
     return request.app.state.unit_service.deactivate_assignment(user, assignment_id)
 
 
+def _catalog_filters(
+    unit_id: str | None = None,
+    module_id: str | None = None,
+    q: str | None = None,
+    active_only: bool = False,
+) -> dict:
+    return {"unit_id": unit_id, "module_id": module_id, "query": q, "active_only": active_only}
+
+
 @router.get("/catalog/dds")
-def dds_catalog(request: Request, user: User):
-    return request.app.state.catalog_service.list_catalog("dds_catalog")
+def dds_catalog(
+    request: Request,
+    user: User,
+    unit_id: str | None = None,
+    module_id: str | None = None,
+    q: str | None = None,
+    active_only: bool = False,
+):
+    return request.app.state.catalog_service.list_catalog("dds_catalog", **_catalog_filters(unit_id, module_id, q, active_only))
 
 
 @router.post("/catalog/dds")
@@ -125,8 +143,15 @@ def update_dds(request: Request, item_id: str, payload: CatalogPatch, user: User
 
 
 @router.get("/catalog/invests")
-def invest_catalog(request: Request, user: User):
-    return request.app.state.catalog_service.list_catalog("invests_catalog")
+def invest_catalog(
+    request: Request,
+    user: User,
+    unit_id: str | None = None,
+    module_id: str | None = None,
+    q: str | None = None,
+    active_only: bool = False,
+):
+    return request.app.state.catalog_service.list_catalog("invests_catalog", **_catalog_filters(unit_id, module_id, q, active_only))
 
 
 @router.post("/catalog/invests")
@@ -137,6 +162,24 @@ def create_invest(request: Request, payload: CatalogCreate, user: User):
 @router.patch("/catalog/invests/{item_id}")
 def update_invest(request: Request, item_id: str, payload: CatalogPatch, user: User):
     return request.app.state.catalog_service.update_catalog(user, "invests_catalog", item_id, clean_patch(payload))
+
+
+@router.get("/catalog/{kind}/import-template")
+def catalog_import_template(request: Request, kind: str, user: User):
+    buffer: BytesIO = request.app.state.excel_service.build_import_template(kind)
+    filename = f"nsi_{kind}_template.xlsx"
+    buffer.seek(0)
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/catalog/{kind}/import")
+async def catalog_import(request: Request, kind: str, user: User, file: UploadFile = File(...)):
+    collection = request.app.state.catalog_service.collection_name(kind)
+    return await request.app.state.excel_service.import_catalog(user, collection, file)
 
 
 @router.get("/catalog/unit-dds-mappings")
@@ -170,8 +213,15 @@ def update_invest_mapping(request: Request, item_id: str, payload: MappingPatch,
 
 
 @router.get("/requests")
-def list_requests(request: Request, user: User, budget_year: int | None = None, status: str | None = None, unit_id: str | None = None):
-    return request.app.state.request_service.list_requests(user, budget_year, status, unit_id)
+def list_requests(request: Request, user: User, status: str | None = None, unit_id: str | None = None):
+    return request.app.state.request_service.list_requests(user, status, unit_id)
+
+
+@router.get("/requests/export/closed")
+@router.get("/requests/export/fixed")
+def export_closed_requests(request: Request, user: User, unit_id: str | None = None):
+    path = request.app.state.excel_service.export_closed_requests(user, unit_id)
+    return FileResponse(path, filename=path.name, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @router.get("/requests/{request_id}")
@@ -199,14 +249,22 @@ def start_review(request: Request, request_id: str, user: User):
     return request.app.state.request_service.start_review(user, request_id)
 
 
+@router.post("/requests/{request_id}/finalize")
 @router.post("/requests/{request_id}/fix")
-def fix_request(request: Request, request_id: str, user: User):
-    return request.app.state.request_service.fix(user, request_id)
+def finalize_request(request: Request, request_id: str, user: User):
+    return request.app.state.request_service.finalize(user, request_id)
 
 
+@router.post("/requests/{request_id}/reopen")
 @router.post("/requests/{request_id}/unfreeze")
-def unfreeze_request(request: Request, request_id: str, user: User):
-    return request.app.state.request_service.unfreeze(user, request_id)
+def reopen_request(request: Request, request_id: str, user: User):
+    return request.app.state.request_service.reopen(user, request_id)
+
+
+@router.get("/requests/{request_id}/export")
+def export_request(request: Request, request_id: str, user: User):
+    path = request.app.state.excel_service.export_closed_request(user, request_id)
+    return FileResponse(path, filename=path.name, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @router.get("/requests/{request_id}/summary")

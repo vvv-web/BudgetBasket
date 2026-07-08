@@ -12,6 +12,7 @@ from app.services import (
     AuthService,
     BudgetItemService,
     CatalogService,
+    ExcelService,
     FileService,
     PermissionService,
     RequestService,
@@ -24,7 +25,9 @@ def create_app() -> FastAPI:
     app = FastAPI(title="BudgetBasket API", version="0.1.0")
     data_root = Path(os.getenv("BUDGET_DATA_ROOT", Path(__file__).resolve().parents[1] / "data"))
     current_dir = Path(os.getenv("BUDGET_DATA_DIR", data_root / "current"))
-    upload_dir = Path(os.getenv("BUDGET_UPLOAD_DIR", Path(__file__).resolve().parents[1] / "uploads"))
+    storage_root = Path(os.getenv("BUDGET_STORAGE_DIR", Path(__file__).resolve().parents[2] / "storage"))
+    upload_dir = Path(os.getenv("BUDGET_UPLOAD_DIR", storage_root / "uploads"))
+    export_dir = Path(os.getenv("BUDGET_EXPORT_DIR", storage_root / "exports"))
     repo = JsonRepository(current_dir)
     seed_data(repo)
 
@@ -39,6 +42,7 @@ def create_app() -> FastAPI:
     app.state.request_service = request_service
     app.state.budget_item_service = BudgetItemService(repo, permissions, request_service)
     app.state.file_service = FileService(repo, permissions, upload_dir)
+    app.state.excel_service = ExcelService(repo, permissions, request_service, export_dir)
     app.state.archive_service = ArchiveService(repo, data_root)
 
     app.add_middleware(

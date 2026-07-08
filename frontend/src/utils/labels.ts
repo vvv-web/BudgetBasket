@@ -8,18 +8,18 @@ export const roleLabels: Record<Role, string> = {
 
 export const requestStatusLabels: Record<RequestStatus, string> = {
   draft: 'Черновик',
-  submitted: 'Отправлена',
-  in_review: 'На проверке',
-  fixed: 'Бюджет зафиксирован',
-  unfrozen: 'Разморожена',
+  on_review: 'На проверке',
+  approved: 'Утверждена',
+  partially_approved: 'Частично утверждена',
+  rejected: 'Отклонена',
   cancelled: 'Отменена',
 };
 
 export const itemStatusLabels: Record<ItemStatus, string> = {
-  in_review: 'На рассмотрении',
+  on_review: 'На рассмотрении',
   rejected: 'Отказано',
-  accepted_adjusted: 'Принято с корректировкой суммы',
-  accepted: 'Принято',
+  approved_with_changes: 'Утверждено с изменениями',
+  approved: 'Утверждено',
 };
 
 export function money(value: number | null | undefined): string {
