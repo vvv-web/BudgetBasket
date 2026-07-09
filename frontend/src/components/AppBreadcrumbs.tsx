@@ -7,7 +7,6 @@ import { Link as RouterLink, useLocation } from 'react-router-dom';
 const labels: Record<string, string> = {
   '': 'Сводка по бюджетам',
   requests: 'Заявки',
-  archive: 'Архив',
   users: 'Пользователи',
   units: 'Оргструктура',
   catalogs: 'НСИ',

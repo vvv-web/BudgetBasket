@@ -1,10 +1,10 @@
-import ArchiveIcon from '@mui/icons-material/Archive';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import FolderIcon from '@mui/icons-material/Folder';
 import LogoutIcon from '@mui/icons-material/Logout';
 import MenuBookIcon from '@mui/icons-material/MenuBook';
 import PeopleIcon from '@mui/icons-material/People';
 import SchemaIcon from '@mui/icons-material/Schema';
+import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Divider from '@mui/material/Divider';
@@ -13,10 +13,11 @@ import List from '@mui/material/List';
 import ListItemButton from '@mui/material/ListItemButton';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
+import Snackbar from '@mui/material/Snackbar';
 import Stack from '@mui/material/Stack';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import type { User } from '../types';
 import { roleLabels } from '../utils/labels';
@@ -26,6 +27,12 @@ const drawerWidth = 280;
 
 const PageActionsContext = createContext<{
   setActions: (node: ReactNode) => void;
+} | null>(null);
+
+type ToastSeverity = 'success' | 'info' | 'warning' | 'error';
+
+const ToastContext = createContext<{
+  showToast: (message: string, severity?: ToastSeverity) => void;
 } | null>(null);
 
 export function usePageChromeActions(actions: ReactNode) {
@@ -38,11 +45,24 @@ export function usePageChromeActions(actions: ReactNode) {
   }, [ctx, actions]);
 }
 
+export function useAppToast() {
+  const ctx = useContext(ToastContext);
+  if (!ctx) {
+    throw new Error('useAppToast must be used within Layout');
+  }
+  return ctx.showToast;
+}
+
 export function Layout({ user, onLogout }: { user: User; onLogout: () => void }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [actions, setActions] = useState<ReactNode>(null);
+  const [toast, setToast] = useState<{ message: string; severity: ToastSeverity; key: number } | null>(null);
   const chrome = useMemo(() => ({ setActions }), []);
+  const showToast = useCallback((message: string, severity: ToastSeverity = 'success') => {
+    setToast({ message, severity, key: Date.now() });
+  }, []);
+  const toastCtx = useMemo(() => ({ showToast }), [showToast]);
 
   useEffect(() => {
     setActions(null);
@@ -51,7 +71,6 @@ export function Layout({ user, onLogout }: { user: User; onLogout: () => void })
   const items = [
     { label: 'Сводка', to: '/', icon: <DashboardIcon /> },
     { label: 'Заявки', to: '/requests', icon: <FolderIcon /> },
-    { label: 'Архив', to: '/archive', icon: <ArchiveIcon /> },
     ...(user.role === 'admin'
       ? [
           { label: 'Пользователи', to: '/users', icon: <PeopleIcon /> },
@@ -102,25 +121,43 @@ export function Layout({ user, onLogout }: { user: User; onLogout: () => void })
           </Button>
         </Box>
       </Drawer>
-      <Box component="main" className="app-main">
-        <Stack
-          className="page-chrome"
-          direction={{ xs: 'column', sm: 'row' }}
-          justifyContent="space-between"
-          alignItems={{ xs: 'stretch', sm: 'center' }}
-          spacing={2}
+      <ToastContext.Provider value={toastCtx}>
+        <Box component="main" className="app-main">
+          <Stack
+            className="page-chrome"
+            direction={{ xs: 'column', sm: 'row' }}
+            justifyContent="space-between"
+            alignItems={{ xs: 'stretch', sm: 'center' }}
+            spacing={2}
+          >
+            <AppBreadcrumbs />
+            {actions ? (
+              <Stack direction="row" spacing={1.25} flexWrap="wrap" useFlexGap className="page-actions">
+                {actions}
+              </Stack>
+            ) : null}
+          </Stack>
+          <PageActionsContext.Provider value={chrome}>
+            <Outlet />
+          </PageActionsContext.Provider>
+        </Box>
+        <Snackbar
+          key={toast?.key}
+          open={!!toast}
+          autoHideDuration={3500}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          onClose={(_, reason) => {
+            if (reason === 'clickaway') return;
+            setToast(null);
+          }}
         >
-          <AppBreadcrumbs />
-          {actions ? (
-            <Stack direction="row" spacing={1.25} flexWrap="wrap" useFlexGap className="page-actions">
-              {actions}
-            </Stack>
-          ) : null}
-        </Stack>
-        <PageActionsContext.Provider value={chrome}>
-          <Outlet />
-        </PageActionsContext.Provider>
-      </Box>
+          {toast ? (
+            <Alert onClose={() => setToast(null)} severity={toast.severity} variant="filled" sx={{ width: '100%' }}>
+              {toast.message}
+            </Alert>
+          ) : undefined}
+        </Snackbar>
+      </ToastContext.Provider>
     </Box>
   );
 }

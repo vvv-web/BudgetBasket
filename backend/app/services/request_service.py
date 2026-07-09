@@ -1,13 +1,13 @@
 from fastapi import HTTPException
 
 from app.models import APPROVED_ITEM_STATUSES, ItemStatus, RequestStatus
-from app.repositories.json_repository import JsonRepository
+from app.repositories.base import Repository
 from app.services.common import get_required
 from app.services.permission_service import PermissionService
 
 
 class RequestService:
-    def __init__(self, repo: JsonRepository, permissions: PermissionService):
+    def __init__(self, repo: Repository, permissions: PermissionService):
         self.repo = repo
         self.permissions = permissions
 
@@ -83,6 +83,20 @@ class RequestService:
         }
         created = self.repo.create("requests", item)
         return self.public_request(created, self.summary(created["id"]))
+
+    def delete_request(self, user: dict, request_id: str) -> None:
+        budget_request = get_required(self.repo, "requests", request_id)
+        self.permissions.require_request_delete_request(user, budget_request)
+
+        dds_item_ids = {item["id"] for item in self.repo.load_all("dds_items") if item["request_id"] == request_id}
+        invest_item_ids = {item["id"] for item in self.repo.load_all("invest_items") if item["request_id"] == request_id}
+        for item_id in dds_item_ids:
+            self.repo.delete_where("dds_item_files", {"dds_item_id": item_id})
+        for item_id in invest_item_ids:
+            self.repo.delete_where("invest_item_files", {"invest_item_id": item_id})
+        self.repo.delete_where("dds_items", {"request_id": request_id})
+        self.repo.delete_where("invest_items", {"request_id": request_id})
+        self.repo.delete("requests", request_id)
 
     def patch_request(self, user: dict, request_id: str, patch: dict) -> dict:
         budget_request = get_required(self.repo, "requests", request_id)

@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { api } from './api/client';
 import { Layout } from './components/Layout';
-import ArchivePage from './pages/ArchivePage';
 import CatalogsPage from './pages/CatalogsPage';
 import DashboardPage from './pages/DashboardPage';
 import LoginPage from './pages/LoginPage';
@@ -53,7 +52,6 @@ export default function App() {
         <Route path="/" element={<DashboardPage user={user} />} />
         <Route path="/requests" element={<RequestsPage user={user} />} />
         <Route path="/requests/:id" element={<RequestDetailsPage user={user} />} />
-        <Route path="/archive" element={<ArchivePage />} />
         <Route path="/users" element={user.role === 'admin' ? <UsersPage /> : <Navigate to="/" replace />} />
         <Route path="/units" element={user.role === 'admin' ? <UnitsPage /> : <Navigate to="/" replace />} />
         <Route path="/catalogs" element={user.role === 'admin' ? <CatalogsPage /> : <Navigate to="/" replace />} />

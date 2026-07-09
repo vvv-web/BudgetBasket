@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.repositories.base import Repository
 from app.repositories.json_repository import JsonRepository
 from app.security import hash_password
 
@@ -75,7 +76,7 @@ def _migrate_statuses(repo: JsonRepository) -> None:
             repo.save_all(collection, items)
 
 
-def seed_data(repo: JsonRepository) -> None:
+def seed_data(repo: Repository) -> None:
     collections = [
         "users",
         "profiles",
@@ -103,8 +104,9 @@ def seed_data(repo: JsonRepository) -> None:
     if invests and not any(item.get("id") == INVEST_DEV_ID for item in invests):
         for item in invests:
             if item.get("id") in {INVEST_PLATFORM_ID, INVEST_INFRA_ID} and not item.get("parent_id"):
-                item["parent_id"] = INVEST_DEV_ID
-        invests.append(
+                repo.update("invests_catalog", item["id"], {"parent_id": INVEST_DEV_ID})
+        repo.create(
+            "invests_catalog",
             {
                 "id": INVEST_DEV_ID,
                 "parent_id": None,
@@ -113,7 +115,6 @@ def seed_data(repo: JsonRepository) -> None:
                 "is_active": True,
             }
         )
-        repo.save_all("invests_catalog", invests)
 
     if repo.load_all("users"):
         return

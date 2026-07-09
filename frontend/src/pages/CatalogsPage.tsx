@@ -1,7 +1,9 @@
 import AddIcon from '@mui/icons-material/Add';
-import CloseIcon from '@mui/icons-material/Close';
+import CancelIcon from '@mui/icons-material/Close';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import DownloadIcon from '@mui/icons-material/Download';
+import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
+import CheckIcon from '@mui/icons-material/Check';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import Alert from '@mui/material/Alert';
 import Autocomplete from '@mui/material/Autocomplete';
@@ -25,10 +27,13 @@ import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import Tabs from '@mui/material/Tabs';
 import TextField from '@mui/material/TextField';
+import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { useAppToast } from '../components/Layout';
 import { downloadBlob } from '../utils/download';
 import type { CatalogItem, Unit } from '../types';
 
@@ -42,11 +47,25 @@ type ManualRow = {
   is_active: boolean;
 };
 
+type CatalogDraft = {
+  parent_id: string;
+  unit_id: string;
+  name: string;
+  is_active: boolean;
+};
+
 const emptyRow = (): ManualRow => ({
   id: crypto.randomUUID(),
   category: '',
   name: '',
   unit_id: '',
+  is_active: true,
+});
+
+const emptyDraft = (): CatalogDraft => ({
+  parent_id: '',
+  unit_id: '',
+  name: '',
   is_active: true,
 });
 
@@ -73,6 +92,11 @@ function BoxList({ items }: { items: string[] }) {
   );
 }
 
+function getErrorMessage(error: unknown, fallback: string) {
+  const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+  return detail || (error instanceof Error ? error.message : fallback);
+}
+
 function CatalogManageDialog({
   open,
   onClose,
@@ -88,6 +112,7 @@ function CatalogManageDialog({
   categories: CatalogItem[];
   onChanged: () => void;
 }) {
+  const toast = useAppToast();
   const meta = catalogMeta[kind];
   const departments = units.filter((unit) => unit.type === 'department' || !unit.parent_id);
   const categoryNames = useMemo(() => {
@@ -155,8 +180,7 @@ function CatalogManageDialog({
           });
           created += 1;
         } catch (error) {
-          const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-          errors.push(`Строка ${line}: ${detail || 'не удалось сохранить'}`);
+          errors.push(`Строка ${line}: ${getErrorMessage(error, 'не удалось сохранить')}`);
         }
       }
       return { created, errors };
@@ -164,9 +188,16 @@ function CatalogManageDialog({
     onSuccess: (result) => {
       setCreateResult(result);
       if (result.created > 0) {
+        toast(`Создано записей: ${result.created}`, 'success');
         setRows([emptyRow()]);
         onChanged();
       }
+      if (result.errors.length > 0) {
+        toast(`Не удалось создать ${result.errors.length} строк`, 'warning');
+      }
+    },
+    onError: (error) => {
+      toast(getErrorMessage(error, 'Не удалось сохранить строки'), 'error');
     },
   });
 
@@ -184,6 +215,15 @@ function CatalogManageDialog({
     onSuccess: (result) => {
       setImportResult(result);
       onChanged();
+      toast(
+        result.errors.length
+          ? `Импорт завершён с ошибками: создано ${result.created}, обновлено ${result.updated}`
+          : `Импортировано: создано ${result.created}, обновлено ${result.updated}`,
+        result.errors.length ? 'warning' : 'success',
+      );
+    },
+    onError: (error) => {
+      toast(getErrorMessage(error, 'Не удалось загрузить файл'), 'error');
     },
   });
 
@@ -223,7 +263,7 @@ function CatalogManageDialog({
           </Button>
         </Stack>
         <IconButton onClick={handleClose} sx={{ position: 'absolute', right: 12, top: 12 }}>
-          <CloseIcon />
+          <CancelIcon />
         </IconButton>
       </DialogTitle>
       <DialogContent dividers>
@@ -328,7 +368,7 @@ function CatalogManageDialog({
                 Добавить строку
               </Button>
               <Button
-                startIcon={<AddIcon />}
+                startIcon={<CheckIcon />}
                 variant="contained"
                 onClick={() => create.mutate()}
                 disabled={create.isPending || !rows.some((row) => row.name.trim())}
@@ -338,7 +378,7 @@ function CatalogManageDialog({
             </Stack>
             {create.isError && (
               <Alert severity="error" sx={{ mt: 1.5 }}>
-                {(create.error as Error)?.message || 'Не удалось сохранить строки'}
+                {getErrorMessage(create.error, 'Не удалось сохранить строки')}
               </Alert>
             )}
             {createResult && (
@@ -357,6 +397,23 @@ function CatalogManageDialog({
   );
 }
 
+function CatalogCellText({
+  editing,
+  value,
+  onChange,
+  placeholder,
+}: {
+  editing: boolean;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  if (!editing) {
+    return <>{value || '—'}</>;
+  }
+  return <TextField size="small" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} fullWidth />;
+}
+
 function CatalogPanel({
   kind,
   units,
@@ -368,6 +425,7 @@ function CatalogPanel({
   dialogOpen: boolean;
   onDialogOpenChange: (open: boolean) => void;
 }) {
+  const toast = useAppToast();
   const meta = catalogMeta[kind];
   const queryClient = useQueryClient();
   const { data = [] } = useQuery({
@@ -375,7 +433,8 @@ function CatalogPanel({
     queryFn: async () => (await api.get<CatalogItem[]>(meta.path)).data,
   });
 
-  const categories = useMemo(() => data.filter((item) => !item.parent_id && item.is_active), [data]);
+  const rootCategories = useMemo(() => data.filter((item) => !item.parent_id), [data]);
+  const departments = useMemo(() => units.filter((unit) => unit.type === 'department' || !unit.parent_id), [units]);
   const sorted = useMemo(() => {
     const byParent = new Map<string | null, CatalogItem[]>();
     for (const item of data) {
@@ -398,11 +457,63 @@ function CatalogPanel({
     return rows;
   }, [data]);
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<CatalogDraft>(emptyDraft());
+  const [deleteTarget, setDeleteTarget] = useState<CatalogItem | null>(null);
+
   const refresh = () => queryClient.invalidateQueries({ queryKey: [meta.path] });
+
+  const startEdit = (item: CatalogItem) => {
+    setEditingId(item.id);
+    setDraft({
+      parent_id: item.parent_id || '',
+      unit_id: item.unit_id || '',
+      name: item.name,
+      is_active: item.is_active,
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setDraft(emptyDraft());
+  };
+
+  const saveItem = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: CatalogDraft }) =>
+      api.patch(`${meta.path}/${id}`, {
+        parent_id: body.parent_id || null,
+        unit_id: body.unit_id || null,
+        name: body.name.trim(),
+        is_active: body.is_active,
+      }),
+    onSuccess: () => {
+      toast('Изменения сохранены', 'success');
+      cancelEdit();
+      refresh();
+    },
+    onError: (error) => {
+      toast(getErrorMessage(error, 'Не удалось сохранить изменения'), 'error');
+    },
+  });
+
+  const deleteItem = useMutation({
+    mutationFn: (id: string) => api.delete(`${meta.path}/${id}`),
+    onSuccess: (_data, deletedId) => {
+      toast('Запись удалена', 'success');
+      if (editingId === deletedId) {
+        cancelEdit();
+      }
+      setDeleteTarget(null);
+      refresh();
+    },
+    onError: (error) => {
+      toast(getErrorMessage(error, 'Не удалось удалить запись'), 'error');
+    },
+  });
 
   return (
     <Stack spacing={2.5}>
-      <Paper className="table-surface">
+      <TableContainer component={Paper} className="table-surface">
         <Table size="small">
           <TableHead>
             <TableRow>
@@ -411,12 +522,15 @@ function CatalogPanel({
               <TableCell>Категория</TableCell>
               <TableCell>Подразделение</TableCell>
               <TableCell>Активно</TableCell>
+              <TableCell align="right">Действия</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {sorted.map((item) => {
               const isCategory = !item.parent_id;
               const parent = data.find((entry) => entry.id === item.parent_id);
+              const editing = editingId === item.id;
+              const parentOptions = rootCategories.filter((category) => category.id !== item.id);
               return (
                 <TableRow key={item.id} hover sx={{ bgcolor: isCategory ? 'rgba(47, 111, 237, 0.04)' : undefined }}>
                   <TableCell>
@@ -430,24 +544,133 @@ function CatalogPanel({
                       }}
                     />
                   </TableCell>
-                  <TableCell sx={{ fontWeight: isCategory ? 700 : 500, pl: isCategory ? 1 : 3 }}>{item.name}</TableCell>
-                  <TableCell>{parent?.name || '—'}</TableCell>
-                  <TableCell>{units.find((unit) => unit.id === item.unit_id)?.name || item.unit_id || '—'}</TableCell>
-                  <TableCell>{item.is_active ? 'Да' : 'Нет'}</TableCell>
+                  <TableCell sx={{ fontWeight: isCategory ? 700 : 500, minWidth: 220 }}>
+                    <CatalogCellText
+                      editing={editing}
+                      value={editing ? draft.name : item.name}
+                      onChange={(value) => setDraft((prev) => ({ ...prev, name: value }))}
+                    />
+                  </TableCell>
+                  <TableCell sx={{ minWidth: 220 }}>
+                    {editing ? (
+                      <TextField
+                        select
+                        size="small"
+                        value={draft.parent_id}
+                        onChange={(event) => setDraft((prev) => ({ ...prev, parent_id: event.target.value }))}
+                        fullWidth
+                      >
+                        <MenuItem value="">Без категории</MenuItem>
+                        {parentOptions.map((category) => (
+                          <MenuItem key={category.id} value={category.id}>{category.name}</MenuItem>
+                        ))}
+                      </TextField>
+                    ) : (
+                      parent?.name || '—'
+                    )}
+                  </TableCell>
+                  <TableCell sx={{ minWidth: 220 }}>
+                    {editing ? (
+                      <TextField
+                        select
+                        size="small"
+                        value={draft.unit_id}
+                        onChange={(event) => setDraft((prev) => ({ ...prev, unit_id: event.target.value }))}
+                        fullWidth
+                      >
+                        <MenuItem value="">—</MenuItem>
+                        {departments.map((unit) => (
+                          <MenuItem key={unit.id} value={unit.id}>{unit.name}</MenuItem>
+                        ))}
+                      </TextField>
+                    ) : (
+                      units.find((unit) => unit.id === item.unit_id)?.name || item.unit_id || '—'
+                    )}
+                  </TableCell>
+                  <TableCell sx={{ minWidth: 140 }}>
+                    {editing ? (
+                      <TextField
+                        select
+                        size="small"
+                        value={draft.is_active ? 'yes' : 'no'}
+                        onChange={(event) => setDraft((prev) => ({ ...prev, is_active: event.target.value === 'yes' }))}
+                        fullWidth
+                      >
+                        <MenuItem value="yes">Да</MenuItem>
+                        <MenuItem value="no">Нет</MenuItem>
+                      </TextField>
+                    ) : (
+                      item.is_active ? 'Да' : 'Нет'
+                    )}
+                  </TableCell>
+                  <TableCell align="right" sx={{ minWidth: 140 }}>
+                    {editing ? (
+                      <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                        <Tooltip title="Сохранить">
+                          <span>
+                            <IconButton
+                              color="primary"
+                              onClick={() => saveItem.mutate({ id: item.id, body: draft })}
+                              disabled={!draft.name.trim() || saveItem.isPending}
+                              aria-label="Сохранить"
+                            >
+                              <CheckIcon fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                        <Tooltip title="Отменить">
+                          <span>
+                            <IconButton onClick={cancelEdit} disabled={saveItem.isPending} aria-label="Отменить">
+                              <CancelIcon fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      </Stack>
+                    ) : (
+                      <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                        <Tooltip title="Редактировать">
+                          <span>
+                            <IconButton onClick={() => startEdit(item)} aria-label="Редактировать запись">
+                              <EditOutlinedIcon fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                        <Tooltip title="Удалить">
+                          <span>
+                            <IconButton onClick={() => setDeleteTarget(item)} aria-label="Удалить запись">
+                              <DeleteOutlineIcon fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      </Stack>
+                    )}
+                  </TableCell>
                 </TableRow>
               );
             })}
           </TableBody>
         </Table>
-      </Paper>
+      </TableContainer>
 
       <CatalogManageDialog
         open={dialogOpen}
         onClose={() => onDialogOpenChange(false)}
         kind={kind}
         units={units}
-        categories={categories}
+        categories={rootCategories}
         onChanged={refresh}
+      />
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title={`Удалить ${deleteTarget && !deleteTarget.parent_id ? 'категорию' : meta.leafLabel}?`}
+        description={`Запись «${deleteTarget?.name || ''}» будет удалена. Это действие нельзя отменить.`}
+        pending={deleteItem.isPending}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (!deleteTarget) return;
+          deleteItem.mutate(deleteTarget.id);
+        }}
       />
     </Stack>
   );

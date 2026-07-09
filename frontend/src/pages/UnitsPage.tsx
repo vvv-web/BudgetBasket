@@ -1,5 +1,6 @@
 import AddIcon from '@mui/icons-material/Add';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -19,7 +20,9 @@ import Typography from '@mui/material/Typography';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { usePageChromeActions } from '../components/Layout';
+import { useAppToast } from '../components/Layout';
 import type { Unit, User } from '../types';
 
 interface Responsible {
@@ -53,7 +56,12 @@ function dedupeUsers(users: User[]): User[] {
 }
 
 function unitKindLabel(unit: Unit): string {
-  return unit.parent_id ? 'Модуль' : 'Подразделение';
+  return 'Объединение';
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+  return detail || (error instanceof Error ? error.message : fallback);
 }
 
 function PersonCard({ user, role, vacancy = false }: { user?: User; role: string; vacancy?: boolean }) {
@@ -78,6 +86,8 @@ function UnitFormDialog({
   onAssignResponsible,
   onAssignEconomist,
   assignPending,
+  onDelete,
+  deletePending = false,
 }: {
   open: boolean;
   mode: UnitDialogMode | null;
@@ -91,6 +101,8 @@ function UnitFormDialog({
   onAssignResponsible: (userId: string) => void;
   onAssignEconomist: (economistId: string) => void;
   assignPending: boolean;
+  onDelete?: () => void;
+  deletePending?: boolean;
 }) {
   const [name, setName] = useState('');
   const [isActive, setIsActive] = useState(true);
@@ -120,8 +132,8 @@ function UnitFormDialog({
   const title = isEdit
     ? `Редактировать: ${mode.unit.name}`
     : mode.kind === 'create-child'
-      ? `Дочернее объединение для «${mode.parent.name}»`
-      : 'Новое подразделение';
+    ? `Дочернее объединение для «${mode.parent.name}»`
+      : 'Новое объединение';
 
   const parentId =
     mode.kind === 'create-child' ? mode.parent.id : mode.kind === 'edit' ? mode.unit.parent_id : null;
@@ -132,7 +144,7 @@ function UnitFormDialog({
       <DialogContent>
         <Stack spacing={2.5} sx={{ pt: 1 }}>
           {mode.kind === 'create-child' && <Alert severity="info">Будет создано объединение внутри выбранного узла.</Alert>}
-          {mode.kind === 'create-root' && <Alert severity="info">Корневое подразделение без родителя.</Alert>}
+          {mode.kind === 'create-root' && <Alert severity="info">Корневое объединение без родителя.</Alert>}
 
           <TextField label="Название" value={name} onChange={(event) => setName(event.target.value)} fullWidth autoFocus />
           {isEdit && (
@@ -219,6 +231,11 @@ function UnitFormDialog({
         </Stack>
       </DialogContent>
       <DialogActions>
+        {isEdit && onDelete && (
+          <Button color="error" startIcon={<DeleteOutlineIcon />} onClick={onDelete} disabled={pending || deletePending}>
+            Удалить
+          </Button>
+        )}
         <Button onClick={onClose}>Отмена</Button>
         <Button
           variant="contained"
@@ -305,6 +322,7 @@ function OrgUnitCard({
 
 export default function UnitsPage() {
   const queryClient = useQueryClient();
+  const toast = useAppToast();
   const { data: tree = [] } = useQuery({
     queryKey: ['units-tree'],
     queryFn: async () => (await api.get<Unit[]>('/units/tree')).data,
@@ -317,6 +335,7 @@ export default function UnitsPage() {
   });
 
   const [dialog, setDialog] = useState<UnitDialogMode | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Unit | null>(null);
 
   const modules = units.filter((unit) => unit.parent_id);
   const employees = users.filter((user) => user.role === 'employee');
@@ -372,6 +391,10 @@ export default function UnitsPage() {
     onSuccess: () => {
       setDialog(null);
       refresh();
+      toast('Объединение создано', 'success');
+    },
+    onError: (error) => {
+      toast(getErrorMessage(error, 'Не удалось создать объединение'), 'error');
     },
   });
 
@@ -381,6 +404,25 @@ export default function UnitsPage() {
     onSuccess: () => {
       setDialog(null);
       refresh();
+      toast('Изменения сохранены', 'success');
+    },
+    onError: (error) => {
+      toast(getErrorMessage(error, 'Не удалось сохранить изменения'), 'error');
+    },
+  });
+
+  const deleteUnit = useMutation({
+    mutationFn: (id: string) => api.delete(`/units/${id}`),
+    onSuccess: (_data, deletedId) => {
+      toast('Объединение удалено', 'success');
+      if (dialog?.kind === 'edit' && dialog.unit.id === deletedId) {
+        setDialog(null);
+      }
+      setDeleteTarget(null);
+      refresh();
+    },
+    onError: (error) => {
+      toast(getErrorMessage(error, 'Не удалось удалить объединение'), 'error');
     },
   });
 
@@ -423,7 +465,7 @@ export default function UnitsPage() {
   const addRootButton = useMemo(
     () => (
       <Button key="add-root" startIcon={<AddIcon />} variant="contained" onClick={() => setDialog({ kind: 'create-root' })}>
-        Подразделение
+        Объединение
       </Button>
     ),
     [],
@@ -465,9 +507,9 @@ export default function UnitsPage() {
           </Box>
         ) : (
           <Stack spacing={2} alignItems="flex-start">
-            <Typography color="text.secondary">Пока нет объединений. Создайте корневое подразделение.</Typography>
+            <Typography color="text.secondary">Пока нет объединений. Создайте корневое объединение.</Typography>
             <Button startIcon={<AddIcon />} variant="contained" onClick={() => setDialog({ kind: 'create-root' })}>
-              Создать подразделение
+              Создать объединение
             </Button>
           </Stack>
         )}
@@ -483,6 +525,8 @@ export default function UnitsPage() {
         economists={economists}
         responsibleUserId={editingUnit ? responsiblesByUnit.get(editingUnit.id)?.user_id : null}
         linkedEconomists={editingUnit ? economistsByUnit.get(editingUnit.id) || [] : []}
+        onDelete={editingUnit ? () => setDeleteTarget(editingUnit) : undefined}
+        deletePending={deleteUnit.isPending}
         onAssignResponsible={(userId) => {
           if (!editingUnit) return;
           responsible.mutate({ unitId: editingUnit.id, userId });
@@ -496,6 +540,18 @@ export default function UnitsPage() {
           });
         }}
         assignPending={responsible.isPending || assign.isPending}
+      />
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Удалить объединение?"
+        description={`Объединение «${deleteTarget?.name || ''}» будет удалено. Это действие нельзя отменить.`}
+        pending={deleteUnit.isPending}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (!deleteTarget) return;
+          deleteUnit.mutate(deleteTarget.id);
+        }}
       />
     </Stack>
   );

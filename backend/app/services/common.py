@@ -3,7 +3,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.repositories.json_repository import JsonRepository
+from app.repositories.base import Repository
 
 
 def now_iso() -> str:
@@ -15,7 +15,7 @@ def require_role(user: dict[str, Any], *roles: str) -> None:
         raise HTTPException(status_code=403, detail="Недостаточно прав")
 
 
-def get_required(repo: JsonRepository, collection: str, item_id: str) -> dict[str, Any]:
+def get_required(repo: Repository, collection: str, item_id: str) -> dict[str, Any]:
     item = repo.get_by_id(collection, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Запись не найдена")

@@ -59,6 +59,13 @@ class JsonRepository:
         self.save_all(collection_name, items)
         return item
 
+    def insert(self, collection_name: str, item: dict[str, Any]) -> dict[str, Any]:
+        items = self.load_all(collection_name)
+        created = {**item}
+        items.append(created)
+        self.save_all(collection_name, items)
+        return created
+
     def update(self, collection_name: str, item_id: str, patch: dict[str, Any]) -> dict[str, Any]:
         items = self.load_all(collection_name)
         for index, item in enumerate(items):
@@ -75,3 +82,39 @@ class JsonRepository:
         if len(kept) == len(items):
             raise HTTPException(status_code=404, detail="Запись не найдена")
         self.save_all(collection_name, kept)
+
+    @staticmethod
+    def _matches(item: dict[str, Any], filters: dict[str, Any]) -> bool:
+        for key, value in filters.items():
+            current = item.get(key)
+            if value is None:
+                if current is not None:
+                    return False
+                continue
+            if str(current) != str(value):
+                return False
+        return True
+
+    def update_where(self, collection_name: str, filters: dict[str, Any], patch: dict[str, Any]) -> int:
+        if not filters:
+            raise HTTPException(status_code=400, detail="Filters are required for bulk update")
+        items = self.load_all(collection_name)
+        updated = 0
+        for index, item in enumerate(items):
+            if not self._matches(item, filters):
+                continue
+            items[index] = {**item, **patch}
+            updated += 1
+        if updated:
+            self.save_all(collection_name, items)
+        return updated
+
+    def delete_where(self, collection_name: str, filters: dict[str, Any]) -> int:
+        if not filters:
+            raise HTTPException(status_code=400, detail="Filters are required for bulk delete")
+        items = self.load_all(collection_name)
+        kept = [item for item in items if not self._matches(item, filters)]
+        deleted = len(items) - len(kept)
+        if deleted:
+            self.save_all(collection_name, kept)
+        return deleted

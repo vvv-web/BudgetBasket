@@ -179,13 +179,6 @@ export const theme = createTheme({
         },
       },
     },
-    MuiStepper: {
-      styleOverrides: {
-        root: {
-          paddingBlock: 8,
-        },
-      },
-    },
     MuiTabs: {
       styleOverrides: {
         indicator: {

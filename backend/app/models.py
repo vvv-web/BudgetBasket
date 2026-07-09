@@ -64,8 +64,15 @@ class UserCreate(StrictModel):
 
 
 class UserPatch(StrictModel):
+    login: str | None = None
     password: str | None = None
     role: Role | None = None
+    name: str | None = None
+    second_name: str | None = None
+    last_name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    max_link: str | None = None
 
 
 class ProfilePatch(StrictModel):

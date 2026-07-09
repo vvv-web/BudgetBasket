@@ -1,14 +1,14 @@
 from fastapi import HTTPException
 
 from app.models import ItemStatus, RequestStatus
-from app.repositories.json_repository import JsonRepository
+from app.repositories.base import Repository
 from app.services.common import get_required
 from app.services.permission_service import PermissionService
 from app.services.request_service import RequestService
 
 
 class BudgetItemService:
-    def __init__(self, repo: JsonRepository, permissions: PermissionService, requests: RequestService):
+    def __init__(self, repo: Repository, permissions: PermissionService, requests: RequestService):
         self.repo = repo
         self.permissions = permissions
         self.requests = requests
@@ -124,8 +124,8 @@ class BudgetItemService:
             self.permissions.require_employee_edit_request(user, budget_request)
         elif budget_request.get("status") != RequestStatus.draft:
             raise HTTPException(status_code=400, detail="Items can be deleted only from draft requests")
-        self.repo.delete(collection, item_id)
         links_collection = "dds_item_files" if collection == "dds_items" else "invest_item_files"
         key = "dds_item_id" if collection == "dds_items" else "invest_item_id"
-        self.repo.save_all(links_collection, [link for link in self.repo.load_all(links_collection) if link.get(key) != item_id])
+        self.repo.delete_where(links_collection, {key: item_id})
+        self.repo.delete(collection, item_id)
         self.requests.recalculate_total(item["request_id"])

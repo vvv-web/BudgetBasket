@@ -12,7 +12,6 @@ from app.repositories.sql_repository import SqlRepository
 from app.routers import router
 from app.seed import seed_data
 from app.services import (
-    ArchiveService,
     AuthService,
     BudgetItemService,
     CatalogService,
@@ -56,8 +55,6 @@ def create_app() -> FastAPI:
     app.state.budget_item_service = BudgetItemService(repo, permissions, request_service)
     app.state.file_service = FileService(repo, permissions, upload_dir, settings)
     app.state.excel_service = ExcelService(repo, permissions, request_service, export_dir)
-    app.state.archive_service = ArchiveService(repo, data_root)
-
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],

@@ -170,7 +170,6 @@
   .surface,
   .surface-pad,
   .table-surface,
-  .wizard-shell,
   .metric-card,
   .login-card {
     border: 1px solid rgba(229, 231, 235, 0.95);
@@ -184,21 +183,13 @@
     border-radius: 18px;
   }
 
-  .surface-pad,
-  .wizard-shell {
+  .surface-pad {
     border-radius: 18px;
     padding: 20px;
   }
 
   .table-surface {
     overflow: hidden;
-  }
-
-  .wizard-summary {
-    border-radius: 14px;
-    border: 1px solid var(--bb-line);
-    background: #f9fafb;
-    padding: 16px;
   }
 
   .login-page {
@@ -259,22 +250,6 @@
 
   .fixed-request {
     box-shadow: inset 3px 0 0 var(--bb-primary);
-  }
-
-  .MuiStepLabel-label {
-    font-size: 0.875rem !important;
-    font-weight: 600 !important;
-    color: #9ca3af !important;
-  }
-
-  .MuiStepLabel-label.Mui-active,
-  .MuiStepLabel-label.Mui-completed {
-    color: var(--bb-ink) !important;
-  }
-
-  .MuiStepIcon-root.Mui-active,
-  .MuiStepIcon-root.Mui-completed {
-    color: var(--bb-primary) !important;
   }
 
   .MuiTableRow-hover:hover {

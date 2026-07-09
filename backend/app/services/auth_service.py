@@ -2,13 +2,13 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from app.repositories.json_repository import JsonRepository
+from app.repositories.base import Repository
 from app.security import hash_password, needs_rehash, verify_password
 from app.services.common import public_user
 
 
 class AuthService:
-    def __init__(self, repo: JsonRepository):
+    def __init__(self, repo: Repository):
         self.repo = repo
         self.tokens: dict[str, str] = {}
 

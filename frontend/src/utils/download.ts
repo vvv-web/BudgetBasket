@@ -6,7 +6,7 @@ export function downloadBlob(data: Blob, filename: string) {
   document.body.appendChild(link);
   link.click();
   link.remove();
-  window.URL.revokeObjectURL(url);
+  window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
 }
 
 export async function downloadAuthorized(path: string, filename: string) {

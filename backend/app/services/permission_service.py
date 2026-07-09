@@ -1,11 +1,11 @@
 from fastapi import HTTPException
 
 from app.models import RequestStatus
-from app.repositories.json_repository import JsonRepository
+from app.repositories.base import Repository
 
 
 class PermissionService:
-    def __init__(self, repo: JsonRepository):
+    def __init__(self, repo: Repository):
         self.repo = repo
 
     def employee_module_ids(self, user_id: str) -> set[str]:
@@ -31,15 +31,11 @@ class PermissionService:
             module_ids = self.employee_module_ids(user["id"])
             return {request["id"] for request in self.repo.load_all("requests") if request.get("unit_id") in module_ids}
 
-        economist_units = self.economist_module_ids(user["id"])
         result = set()
         for request in self.repo.load_all("requests"):
-            if request.get("economist_id") == user["id"]:
-                result.add(request["id"])
-            elif request.get("unit_id") in economist_units:
-                result.add(request["id"])
-            elif request.get("economist_id") is None and request.get("status") == RequestStatus.on_review:
-                result.add(request["id"])
+            if request.get("status") == RequestStatus.draft:
+                continue
+            result.add(request["id"])
         return result
 
     def can_view_request(self, user: dict, request: dict) -> bool:
@@ -48,12 +44,7 @@ class PermissionService:
         if user["role"] == "employee":
             return request.get("unit_id") in self.employee_module_ids(user["id"])
         if user["role"] == "economist":
-            if request.get("economist_id") == user["id"]:
-                return True
-            if request.get("unit_id") in self.economist_module_ids(user["id"]):
-                return True
-            if request.get("economist_id") is None and request.get("status") == RequestStatus.on_review:
-                return True
+            return request.get("status") != RequestStatus.draft
         return False
 
     def require_view_request(self, user: dict, request: dict) -> None:
@@ -65,6 +56,12 @@ class PermissionService:
             raise HTTPException(status_code=403, detail="Only responsible employee can edit request")
         if request.get("status") != RequestStatus.draft:
             raise HTTPException(status_code=400, detail="Request is not editable")
+
+    def require_request_delete_request(self, user: dict, request: dict) -> None:
+        if request.get("status") != RequestStatus.draft:
+            raise HTTPException(status_code=400, detail="Request can be deleted only in draft")
+        if user["role"] != "employee" or request.get("unit_id") not in self.employee_module_ids(user["id"]):
+            raise HTTPException(status_code=403, detail="Only responsible employee can delete request")
 
     def require_employee_upload_file(self, user: dict, request: dict) -> None:
         if user["role"] == "admin":

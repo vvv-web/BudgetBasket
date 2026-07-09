@@ -9,7 +9,7 @@ from fastapi import HTTPException, UploadFile
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
-from app.repositories.json_repository import JsonRepository
+from app.repositories.base import Repository
 from app.services.common import get_required, require_role
 from app.services.permission_service import PermissionService
 from app.services.request_service import RequestService
@@ -39,7 +39,7 @@ ITEM_STATUS_LABELS = {
 class ExcelService:
     def __init__(
         self,
-        repo: JsonRepository,
+        repo: Repository,
         permissions: PermissionService,
         requests: RequestService,
         export_dir: Path,

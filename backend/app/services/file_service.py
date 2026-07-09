@@ -8,7 +8,7 @@ from fastapi import HTTPException, UploadFile
 
 from app.config import Settings
 from app.models import RequestStatus
-from app.repositories.json_repository import JsonRepository
+from app.repositories.base import Repository
 from app.services.common import get_required
 from app.services.permission_service import PermissionService
 from app.storage import LocalObjectStorage, S3ObjectStorage
@@ -20,7 +20,7 @@ SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 class FileService:
     def __init__(
         self,
-        repo: JsonRepository,
+        repo: Repository,
         permissions: PermissionService,
         upload_dir: str | Path,
         settings: Settings,
@@ -35,10 +35,6 @@ class FileService:
 
     def ensure_bucket(self) -> None:
         self.object_storage.ensure_bucket()
-
-    def next_int_id(self, collection: str) -> int:
-        ids = [int(item["id"]) for item in self.repo.load_all(collection) if str(item.get("id", "")).isdigit()]
-        return max(ids, default=0) + 1
 
     @staticmethod
     def safe_original_name(original_name: str) -> str:
@@ -65,15 +61,11 @@ class FileService:
             raise HTTPException(status_code=400, detail=f"File is larger than {self.settings.max_upload_file_size_mb} MB")
 
     def _create_storage_object(self, storage_payload: dict) -> dict:
-        if getattr(self.repo, "is_sql", False):
-            return self.repo.create("storage_objects", storage_payload)
-        return self.repo.create("storage_objects", {"id": self.next_int_id("storage_objects"), **storage_payload})
+        return self.repo.create("storage_objects", storage_payload)
 
     def _create_file(self, storage_id: int, original_name: str) -> dict:
         payload = {"id_storage_object": storage_id, "original_name": original_name}
-        if getattr(self.repo, "is_sql", False):
-            return self.repo.create("files", payload)
-        return self.repo.create("files", {"id": self.next_int_id("files"), **payload})
+        return self.repo.create("files", payload)
 
     async def upload(self, upload: UploadFile, *, request_id: str | None = None, item_type: str = "detached", item_id: str = "detached") -> dict:
         original_name = upload.filename or "file"
@@ -121,8 +113,43 @@ class FileService:
         if any(link.get("file_id") == file_id and link.get(key) == item_id for link in self.repo.load_all(link_collection)):
             raise HTTPException(status_code=400, detail="File is already attached to item")
         link = {"file_id": file_id, key: item_id}
-        self.repo.save_all(link_collection, [*self.repo.load_all(link_collection), link])
-        return link
+        return self.repo.insert(link_collection, link)
+
+    def delete_link(self, user: dict, kind: str, item_id: str, file_id: str | int) -> None:
+        collection = "dds_items" if kind == "dds" else "invest_items"
+        item = get_required(self.repo, collection, item_id)
+        budget_request = get_required(self.repo, "requests", item["request_id"])
+        if user["role"] == "admin":
+            pass
+        else:
+            self.permissions.require_employee_upload_file(user, budget_request)
+
+        link_collection = "dds_item_files" if kind == "dds" else "invest_item_files"
+        key = "dds_item_id" if kind == "dds" else "invest_item_id"
+        file_id = int(file_id) if str(file_id).isdigit() else file_id
+        deleted = self.repo.delete_where(link_collection, {key: item_id, "file_id": file_id})
+        if not deleted:
+            raise HTTPException(status_code=404, detail="File link not found")
+
+        remaining_links = [
+            link
+            for collection_name in ("dds_item_files", "invest_item_files")
+            for link in self.repo.load_all(collection_name)
+            if link.get("file_id") == file_id
+        ]
+        if remaining_links:
+            return
+
+        file = get_required(self.repo, "files", file_id)
+        storage_id = file["id_storage_object"]
+        self.repo.delete("files", file_id)
+        if not any(entry.get("id_storage_object") == storage_id for entry in self.repo.load_all("files")):
+            storage = get_required(self.repo, "storage_objects", storage_id)
+            try:
+                self.object_storage.delete_object(storage["storage_key"])
+            except Exception:
+                pass
+            self.repo.delete("storage_objects", storage_id)
 
     def _request_for_file(self, file_id: str | int) -> list[dict]:
         file_id = int(file_id) if str(file_id).isdigit() else file_id

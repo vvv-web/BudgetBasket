@@ -40,6 +40,16 @@ class SqlRepository:
     def _coerce_payload(self, table, payload: dict[str, Any]) -> dict[str, Any]:
         return {key: self._coerce_value(table.c[key], value) for key, value in payload.items() if key in table.c}
 
+    def _where_clause(self, table, filters: dict[str, Any]):
+        if not filters:
+            raise HTTPException(status_code=400, detail="Filters are required for bulk operation")
+        clauses = []
+        for key, value in filters.items():
+            if key not in table.c:
+                raise HTTPException(status_code=500, detail=f"Unknown SQL field {key} for {table.name}")
+            clauses.append(table.c[key] == self._coerce_value(table.c[key], value))
+        return clauses
+
     def load_all(self, collection_name: str) -> list[dict[str, Any]]:
         table = self._table(collection_name)
         with self.session_factory() as session:
@@ -78,6 +88,9 @@ class SqlRepository:
                 raise HTTPException(status_code=400, detail="Database constraint violation") from exc
             return self._row_to_dict(row)
 
+    def insert(self, collection_name: str, item: dict[str, Any]) -> dict[str, Any]:
+        return self.create(collection_name, item)
+
     def update(self, collection_name: str, item_id: str | int, patch: dict[str, Any]) -> dict[str, Any]:
         table = self._table(collection_name)
         payload = self._coerce_payload(table, patch)
@@ -99,6 +112,25 @@ class SqlRepository:
             if result.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Запись не найдена")
             session.commit()
+
+    def update_where(self, collection_name: str, filters: dict[str, Any], patch: dict[str, Any]) -> int:
+        table = self._table(collection_name)
+        payload = self._coerce_payload(table, patch)
+        with self.session_factory() as session:
+            try:
+                result = session.execute(update(table).where(*self._where_clause(table, filters)).values(**payload))
+                session.commit()
+            except IntegrityError as exc:
+                session.rollback()
+                raise HTTPException(status_code=400, detail="Database constraint violation") from exc
+        return result.rowcount or 0
+
+    def delete_where(self, collection_name: str, filters: dict[str, Any]) -> int:
+        table = self._table(collection_name)
+        with self.session_factory() as session:
+            result = session.execute(delete(table).where(*self._where_clause(table, filters)))
+            session.commit()
+        return result.rowcount or 0
 
     def check_connection(self) -> None:
         with self.session_factory() as session:

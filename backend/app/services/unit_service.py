@@ -1,11 +1,11 @@
 from fastapi import HTTPException
 
-from app.repositories.json_repository import JsonRepository
+from app.repositories.base import Repository
 from app.services.common import require_role
 
 
 class UnitService:
-    def __init__(self, repo: JsonRepository):
+    def __init__(self, repo: Repository):
         self.repo = repo
 
     @staticmethod
@@ -24,6 +24,26 @@ class UnitService:
         require_role(user, "admin")
         patch = {key: value for key, value in patch.items() if key != "type"}
         return self.enrich_unit(self.repo.update("units", unit_id, patch))
+
+    def delete_unit(self, user: dict, unit_id: str) -> None:
+        require_role(user, "admin")
+        target = self.repo.get_by_id("units", unit_id)
+        if not target:
+            raise HTTPException(status_code=404, detail="Запись не найдена")
+        if any(request.get("unit_id") == unit_id for request in self.repo.load_all("requests")):
+            raise HTTPException(status_code=400, detail="Нельзя удалить подразделение, пока есть связанные заявки")
+        if any(item.get("unit_id") == unit_id for item in self.repo.load_all("dds_catalog")):
+            raise HTTPException(status_code=400, detail="Нельзя удалить подразделение, пока в нем есть статьи ДДС")
+        if any(item.get("unit_id") == unit_id for item in self.repo.load_all("invests_catalog")):
+            raise HTTPException(status_code=400, detail="Нельзя удалить подразделение, пока в нем есть инвест-проекты")
+
+        for item in self.repo.load_all("units"):
+            if item.get("parent_id") == unit_id:
+                self.repo.update("units", item["id"], {"parent_id": None})
+        self.repo.delete_where("units_responsibles", {"unit_id": unit_id})
+        self.repo.delete_where("unit_dds_mappings", {"unit_id": unit_id})
+        self.repo.delete_where("unit_invest_mappings", {"unit_id": unit_id})
+        self.repo.delete("units", unit_id)
 
     def tree(self) -> list[dict]:
         units = [dict(self.enrich_unit(item), children=[]) for item in self.repo.load_all("units")]
@@ -46,13 +66,12 @@ class UnitService:
         existing = next((item for item in items if item["unit_id"] == unit_id and item["user_id"] == employee_id and item.get("is_active")), None)
         if existing:
             return existing
-        for item in items:
-            if item["unit_id"] == unit_id:
-                item["is_active"] = False
-        assignment = {"unit_id": unit_id, "user_id": employee_id, "is_active": True}
-        items.append(assignment)
-        self.repo.save_all("units_responsibles", items)
-        return assignment
+        self.repo.update_where("units_responsibles", {"unit_id": unit_id}, {"is_active": False})
+        inactive = next((item for item in items if item["unit_id"] == unit_id and item["user_id"] == employee_id), None)
+        if inactive:
+            self.repo.update_where("units_responsibles", {"unit_id": unit_id, "user_id": employee_id}, {"is_active": True})
+            return {"unit_id": unit_id, "user_id": employee_id, "is_active": True}
+        return self.repo.insert("units_responsibles", {"unit_id": unit_id, "user_id": employee_id, "is_active": True})
 
     def get_responsible(self, unit_id: str) -> dict | None:
         return next((item for item in self.repo.load_all("units_responsibles") if item["unit_id"] == unit_id and item.get("is_active")), None)
@@ -104,19 +123,17 @@ class UnitService:
         unit_ids = [payload["unit_id"]]
         if payload.get("assignment_type") == "department":
             unit_ids = [unit["id"] for unit in self.repo.load_all("units") if unit.get("parent_id") == payload["unit_id"]]
-        requests = self.repo.load_all("requests")
-        changed = False
-        for request in requests:
+        for request in self.repo.load_all("requests"):
             if request.get("unit_id") in unit_ids:
-                request["economist_id"] = payload["economist_id"]
-                changed = True
-        if changed:
-            self.repo.save_all("requests", requests)
-        responsibles = self.repo.load_all("units_responsibles")
+                self.repo.update("requests", request["id"], {"economist_id": payload["economist_id"]})
+        responsibles = {(item["unit_id"], item["user_id"]): item for item in self.repo.load_all("units_responsibles")}
         for unit_id in unit_ids:
-            if not any(item.get("unit_id") == unit_id and item.get("user_id") == payload["economist_id"] for item in responsibles):
-                responsibles.append({"unit_id": unit_id, "user_id": payload["economist_id"], "is_active": True})
-        self.repo.save_all("units_responsibles", responsibles)
+            existing = responsibles.get((unit_id, payload["economist_id"]))
+            if existing:
+                if not existing.get("is_active"):
+                    self.repo.update_where("units_responsibles", {"unit_id": unit_id, "user_id": payload["economist_id"]}, {"is_active": True})
+                continue
+            self.repo.insert("units_responsibles", {"unit_id": unit_id, "user_id": payload["economist_id"], "is_active": True})
         return {
             "id": f"{payload['economist_id']}:{payload['unit_id']}",
             "economist_id": payload["economist_id"],

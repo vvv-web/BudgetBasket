@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from io import BytesIO
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
@@ -56,6 +57,12 @@ def update_user(request: Request, user_id: str, payload: UserPatch, user: User):
     return request.app.state.user_service.update_user(user, user_id, clean_patch(payload))
 
 
+@router.delete("/users/{user_id}")
+def delete_user(request: Request, user_id: str, user: User):
+    request.app.state.user_service.delete_user(user, user_id)
+    return {"ok": True}
+
+
 @router.get("/profiles/{user_id}")
 def get_profile(request: Request, user_id: str, user: User):
     return request.app.state.user_service.get_profile(user, user_id)
@@ -79,6 +86,12 @@ def create_unit(request: Request, payload: UnitCreate, user: User):
 @router.patch("/units/{unit_id}")
 def update_unit(request: Request, unit_id: str, payload: UnitPatch, user: User):
     return request.app.state.unit_service.update_unit(user, unit_id, clean_patch(payload))
+
+
+@router.delete("/units/{unit_id}")
+def delete_unit(request: Request, unit_id: str, user: User):
+    request.app.state.unit_service.delete_unit(user, unit_id)
+    return {"ok": True}
 
 
 @router.get("/units/tree")
@@ -142,6 +155,12 @@ def update_dds(request: Request, item_id: str, payload: CatalogPatch, user: User
     return request.app.state.catalog_service.update_catalog(user, "dds_catalog", item_id, clean_patch(payload))
 
 
+@router.delete("/catalog/dds/{item_id}")
+def delete_dds(request: Request, item_id: str, user: User):
+    request.app.state.catalog_service.delete_catalog(user, "dds_catalog", item_id)
+    return {"ok": True}
+
+
 @router.get("/catalog/invests")
 def invest_catalog(
     request: Request,
@@ -162,6 +181,12 @@ def create_invest(request: Request, payload: CatalogCreate, user: User):
 @router.patch("/catalog/invests/{item_id}")
 def update_invest(request: Request, item_id: str, payload: CatalogPatch, user: User):
     return request.app.state.catalog_service.update_catalog(user, "invests_catalog", item_id, clean_patch(payload))
+
+
+@router.delete("/catalog/invests/{item_id}")
+def delete_invest(request: Request, item_id: str, user: User):
+    request.app.state.catalog_service.delete_catalog(user, "invests_catalog", item_id)
+    return {"ok": True}
 
 
 @router.get("/catalog/{kind}/import-template")
@@ -239,6 +264,12 @@ def get_request(request: Request, request_id: str, user: User):
 @router.post("/requests")
 def create_request(request: Request, payload: RequestCreate, user: User):
     return request.app.state.request_service.create_request(user, payload.model_dump())
+
+
+@router.delete("/requests/{request_id}")
+def delete_request(request: Request, request_id: str, user: User):
+    request.app.state.request_service.delete_request(user, request_id)
+    return {"ok": True}
 
 
 @router.patch("/requests/{request_id}")
@@ -371,25 +402,26 @@ def invest_item_files(request: Request, item_id: str, user: User):
     return request.app.state.file_service.files_for_item(user, "invest", item_id)
 
 
+@router.delete("/dds-items/{item_id}/files/{file_id}")
+def delete_dds_item_file(request: Request, item_id: str, file_id: str, user: User):
+    request.app.state.file_service.delete_link(user, "dds", item_id, file_id)
+    return {"ok": True}
+
+
+@router.delete("/invest-items/{item_id}/files/{file_id}")
+def delete_invest_item_file(request: Request, item_id: str, file_id: str, user: User):
+    request.app.state.file_service.delete_link(user, "invest", item_id, file_id)
+    return {"ok": True}
+
+
 @router.get("/files/{file_id}/download")
 def download_file(request: Request, file_id: str, user: User):
     body, file, _storage, size, content_type = request.app.state.file_service.download(user, file_id)
-    headers = {"Content-Disposition": f'attachment; filename="{file["original_name"]}"'}
+    original_name = file["original_name"]
+    ascii_name = "".join(char if ord(char) < 128 else "_" for char in original_name).strip() or "download"
+    headers = {
+        "Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(original_name)}"
+    }
     if size is not None:
         headers["Content-Length"] = str(size)
     return StreamingResponse(body, media_type=content_type or "application/octet-stream", headers=headers)
-
-
-@router.post("/admin/archive-year/{year}")
-def archive_year(request: Request, year: int, user: User):
-    return request.app.state.archive_service.archive_year(user, year)
-
-
-@router.get("/archive/{year}/requests")
-def archive_requests(request: Request, year: int, user: User):
-    return request.app.state.archive_service.list_archive_requests(user, year)
-
-
-@router.get("/archive/{year}/requests/{request_id}")
-def archive_request(request: Request, year: int, request_id: str, user: User):
-    return request.app.state.archive_service.get_archive_request(user, year, request_id)

@@ -1,6 +1,6 @@
 from fastapi import HTTPException
 
-from app.repositories.json_repository import JsonRepository
+from app.repositories.base import Repository
 from app.services.common import require_role
 
 
@@ -10,7 +10,7 @@ class CatalogService:
         "invests": "invests_catalog",
     }
 
-    def __init__(self, repo: JsonRepository):
+    def __init__(self, repo: Repository):
         self.repo = repo
 
     def collection_name(self, kind: str) -> str:
@@ -77,6 +77,22 @@ class CatalogService:
             allowed["unit_id"] = self.department_id_for_unit(allowed["unit_id"])
         return self.repo.update(collection, item_id, allowed)
 
+    def delete_catalog(self, user: dict, collection: str, item_id: str) -> None:
+        require_role(user, "admin")
+        target = self.repo.get_by_id(collection, item_id)
+        if not target:
+            raise HTTPException(status_code=404, detail="Запись не найдена")
+
+        references_collection = "dds_items" if collection == "dds_catalog" else "invest_items"
+        reference_field = "dds_id" if collection == "dds_catalog" else "invest_id"
+        if any(item.get(reference_field) == item_id or item.get("category_id") == item_id for item in self.repo.load_all(references_collection)):
+            raise HTTPException(status_code=400, detail="Нельзя удалить запись, пока она используется в заявках")
+
+        for item in self.repo.load_all(collection):
+            if item.get("parent_id") == item_id:
+                self.repo.update(collection, item["id"], {"parent_id": None})
+        self.repo.delete(collection, item_id)
+
     def list_mappings(self, collection: str) -> list[dict]:
         return self.repo.load_all(collection)
 
@@ -86,7 +102,7 @@ class CatalogService:
         if payload.get("is_active"):
             for item in self.repo.load_all(collection):
                 if item.get("unit_id") == payload.get("unit_id") and item.get(key) == payload.get(key) and item.get("is_active"):
-                    item["is_active"] = False
+                    self.repo.update(collection, item["id"], {"is_active": False})
         return self.repo.create(collection, payload)
 
     def update_mapping(self, user: dict, collection: str, item_id: str, patch: dict) -> dict:
