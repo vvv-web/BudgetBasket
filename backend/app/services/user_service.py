@@ -84,7 +84,8 @@ class UserService:
         return profile
 
     def update_profile(self, current_user: dict, user_id: str, patch: dict) -> dict:
-        require_role(current_user, "admin")
+        if current_user["role"] != "admin" and current_user["id"] != user_id:
+            raise HTTPException(status_code=403, detail="Нет доступа к профилю")
         profiles = self.repo.load_all("profiles")
         for profile in profiles:
             if profile["user_id"] == user_id:

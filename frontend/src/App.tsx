@@ -18,15 +18,22 @@ export default function App() {
   });
   const navigate = useNavigate();
 
+  const persistUser = (nextUser: User) => {
+    localStorage.setItem('budgetbasket_user', JSON.stringify(nextUser));
+    setUser(nextUser);
+  };
+
   useEffect(() => {
     if (!localStorage.getItem('budgetbasket_token')) return;
-    api.get<User>('/auth/me').then((response) => setUser(response.data)).catch(() => setUser(null));
+    api
+      .get<User>('/auth/me')
+      .then((response) => persistUser(response.data))
+      .catch(() => setUser(null));
   }, []);
 
   function handleLogin(token: string, nextUser: User) {
     localStorage.setItem('budgetbasket_token', token);
-    localStorage.setItem('budgetbasket_user', JSON.stringify(nextUser));
-    setUser(nextUser);
+    persistUser(nextUser);
     navigate('/');
   }
 
@@ -48,7 +55,7 @@ export default function App() {
 
   return (
     <Routes>
-      <Route element={<Layout user={user} onLogout={logout} />}>
+      <Route element={<Layout user={user} onLogout={logout} onUserChange={persistUser} />}>
         <Route path="/" element={<DashboardPage user={user} />} />
         <Route path="/requests" element={<RequestsPage user={user} />} />
         <Route path="/requests/:id" element={<RequestDetailsPage user={user} />} />

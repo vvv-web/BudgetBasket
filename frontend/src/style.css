@@ -132,6 +132,42 @@
     letter-spacing: -0.01em;
   }
 
+  .app-drawer .drawer-profile-item {
+    min-height: 52px;
+    margin: 0 2px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    border-radius: 12px;
+  }
+
+  .app-drawer .drawer-profile-item:hover {
+    background: rgba(244, 246, 250, 0.85);
+  }
+
+  .app-drawer .drawer-profile-item .drawer-profile-icon {
+    min-width: 34px;
+    margin-top: 0;
+    color: #9ca3af;
+    align-self: center;
+  }
+
+  .app-drawer .drawer-profile-item .MuiListItemText-root {
+    margin: 0;
+    min-width: 0;
+  }
+
+  .app-drawer .drawer-profile-item .MuiListItemText-primary {
+    font-size: 0.92rem;
+    line-height: 1.15;
+    font-weight: 600;
+  }
+
+  .app-drawer .drawer-profile-item .MuiListItemText-secondary {
+    margin-top: 1px;
+    font-size: 0.78rem;
+    line-height: 1.05;
+  }
+
   .app-drawer .Mui-selected {
     background: var(--bb-primary-soft) !important;
     color: var(--bb-ink) !important;
@@ -270,6 +306,8 @@
 
   .org-chart-panel {
     overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
     border-radius: 18px;
     border: 1px solid var(--bb-line);
     background: rgba(255, 255, 255, 0.95);
@@ -279,13 +317,19 @@
 
   .org-forest {
     display: flex;
-    flex-direction: column;
-    gap: 40px;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 32px;
+    width: max-content;
+    min-width: 100%;
   }
 
   .org-chart {
     display: flex;
-    min-width: 980px;
+    flex: 0 0 auto;
+    width: max-content;
     flex-direction: column;
     align-items: center;
   }

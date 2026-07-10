@@ -462,3 +462,53 @@ def test_catalog_scoped_by_module_and_excel_import_export(tmp_path):
     batch_book = load_exported(BytesIO(batch.content))
     assert batch_book.sheetnames[0] == "Состав"
     assert batch_book["Состав"].max_row >= 3
+
+
+def test_catalog_duplicate_rows_are_rejected(tmp_path):
+    from uuid import uuid4
+
+    client = make_client(tmp_path)
+    admin = auth(client, "admin", "admin")
+
+    suffix = uuid4().hex[:8]
+    for path in ("/catalog/dds", "/catalog/invests"):
+        category_name = f"Категория {suffix}"
+        item_name = f"Статья {suffix}"
+
+        created_category = client.post(
+            path,
+            json={"parent_id": None, "unit_id": MODULE_ALPHA_ID, "name": category_name, "is_active": True},
+            headers=admin,
+        )
+        assert created_category.status_code == 200
+
+        duplicate_category = client.post(
+            path,
+            json={"parent_id": None, "unit_id": MODULE_ALPHA_ID, "name": category_name, "is_active": True},
+            headers=admin,
+        )
+        assert duplicate_category.status_code == 400
+
+        created_item = client.post(
+            path,
+            json={
+                "parent_id": created_category.json()["id"],
+                "unit_id": MODULE_ALPHA_ID,
+                "name": item_name,
+                "is_active": True,
+            },
+            headers=admin,
+        )
+        assert created_item.status_code == 200
+
+        duplicate_item = client.post(
+            path,
+            json={
+                "parent_id": created_category.json()["id"],
+                "unit_id": MODULE_ALPHA_ID,
+                "name": item_name,
+                "is_active": True,
+            },
+            headers=admin,
+        )
+        assert duplicate_item.status_code == 400
