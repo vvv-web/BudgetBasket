@@ -30,10 +30,6 @@ class Settings:
     )
 
     @property
-    def use_database(self) -> bool:
-        return bool(self.database_url)
-
-    @property
     def use_s3(self) -> bool:
         return bool(self.s3_endpoint)
 

@@ -31,12 +31,12 @@ class PermissionService:
             module_ids = self.employee_module_ids(user["id"])
             return {request["id"] for request in self.repo.load_all("requests") if request.get("unit_id") in module_ids}
 
-        result = set()
-        for request in self.repo.load_all("requests"):
-            if request.get("status") == RequestStatus.draft:
-                continue
-            result.add(request["id"])
-        return result
+        module_ids = self.economist_module_ids(user["id"])
+        return {
+            request["id"]
+            for request in self.repo.load_all("requests")
+            if request.get("status") != RequestStatus.draft and request.get("unit_id") in module_ids
+        }
 
     def can_view_request(self, user: dict, request: dict) -> bool:
         if user["role"] == "admin":
@@ -44,7 +44,7 @@ class PermissionService:
         if user["role"] == "employee":
             return request.get("unit_id") in self.employee_module_ids(user["id"])
         if user["role"] == "economist":
-            return request.get("status") != RequestStatus.draft
+            return request.get("status") != RequestStatus.draft and request.get("unit_id") in self.economist_module_ids(user["id"])
         return False
 
     def require_view_request(self, user: dict, request: dict) -> None:
@@ -101,6 +101,5 @@ class PermissionService:
     def require_economist_review_request(self, user: dict, request: dict) -> None:
         if user["role"] != "economist":
             raise HTTPException(status_code=403, detail="Only economist can review request")
-        economist_id = request.get("economist_id")
-        if economist_id not in (None, user["id"]) and request.get("unit_id") not in self.economist_module_ids(user["id"]):
+        if request.get("unit_id") not in self.economist_module_ids(user["id"]):
             raise HTTPException(status_code=403, detail="Only assigned economist can review request")

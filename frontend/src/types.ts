@@ -76,3 +76,4 @@ export interface FileAttachment {
 }
 
 export const CLOSED_REQUEST_STATUSES: RequestStatus[] = ['approved', 'approved_with_changes', 'partially_approved', 'rejected', 'cancelled'];
+export const EXPORTABLE_REQUEST_STATUSES: RequestStatus[] = ['approved', 'approved_with_changes', 'partially_approved'];

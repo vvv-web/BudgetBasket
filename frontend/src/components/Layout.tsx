@@ -3,6 +3,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import FolderIcon from '@mui/icons-material/Folder';
 import LogoutIcon from '@mui/icons-material/Logout';
+import MenuIcon from '@mui/icons-material/Menu';
 import MenuBookIcon from '@mui/icons-material/MenuBook';
 import PeopleIcon from '@mui/icons-material/People';
 import SchemaIcon from '@mui/icons-material/Schema';
@@ -25,6 +26,8 @@ import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import { useTheme } from '@mui/material/styles';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -32,6 +35,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import type { Profile, User } from '../types';
 import { roleLabels } from '../utils/labels';
+import { EMAIL_RE, PHONE_RE, formatPhone, lettersOnly } from '../utils/validation';
 import { AppBreadcrumbs } from './AppBreadcrumbs';
 
 const drawerWidth = 280;
@@ -92,7 +96,10 @@ export function Layout({
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [actions, setActions] = useState<ReactNode>(null);
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; severity: ToastSeverity; key: number } | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileForm, setProfileForm] = useState<ProfileDraft>(emptyProfile);
@@ -155,6 +162,9 @@ export function Layout({
   });
 
   const displayName = formatFullName(profile || user.profile || null, user.login);
+  const invalidProfileContact =
+    (!!profileForm.email && !EMAIL_RE.test(profileForm.email)) ||
+    (!!profileForm.phone && !PHONE_RE.test(profileForm.phone));
 
   const items = [
     { label: 'Сводка', to: '/', icon: <DashboardIcon /> },
@@ -172,7 +182,10 @@ export function Layout({
     <Box className="app-shell">
       <Drawer
         className="app-drawer"
-        variant="permanent"
+        variant={isMobile ? 'temporary' : 'permanent'}
+        open={isMobile ? mobileDrawerOpen : true}
+        onClose={() => setMobileDrawerOpen(false)}
+        ModalProps={{ keepMounted: true }}
         sx={{ width: drawerWidth, '& .MuiDrawer-paper': { width: drawerWidth, boxSizing: 'border-box' } }}
       >
         <Toolbar>
@@ -195,7 +208,14 @@ export function Layout({
           {items.map((item) => {
             const selected = item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to);
             return (
-              <ListItemButton key={item.to} selected={selected} onClick={() => navigate(item.to)}>
+              <ListItemButton
+                key={item.to}
+                selected={selected}
+                onClick={() => {
+                  navigate(item.to);
+                  setMobileDrawerOpen(false);
+                }}
+              >
                 <ListItemIcon>{item.icon}</ListItemIcon>
                 <ListItemText primary={item.label} />
               </ListItemButton>
@@ -208,7 +228,10 @@ export function Layout({
           <ListItemButton
             className="drawer-profile-item"
             dense
-            onClick={() => setProfileOpen(true)}
+            onClick={() => {
+              setProfileOpen(true);
+              setMobileDrawerOpen(false);
+            }}
             aria-label="Открыть профиль"
             title={displayName}
           >
@@ -224,7 +247,15 @@ export function Layout({
           </ListItemButton>
         </List>
         <Box sx={{ px: 2, pt: 0.5, pb: 1.5 }}>
-          <Button fullWidth startIcon={<LogoutIcon />} onClick={onLogout} variant="outlined">
+          <Button
+            fullWidth
+            startIcon={<LogoutIcon />}
+            onClick={() => {
+              setMobileDrawerOpen(false);
+              onLogout();
+            }}
+            variant="outlined"
+          >
             Выйти
           </Button>
         </Box>
@@ -256,21 +287,21 @@ export function Layout({
                 <TextField
                   label="Фамилия"
                   value={profileForm.last_name}
-                  onChange={(event) => setProfileForm((prev) => ({ ...prev, last_name: event.target.value }))}
+                  onChange={(event) => setProfileForm((prev) => ({ ...prev, last_name: lettersOnly(event.target.value) }))}
                   fullWidth
                 />
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.75}>
                   <TextField
                     label="Имя"
                     value={profileForm.name}
-                    onChange={(event) => setProfileForm((prev) => ({ ...prev, name: event.target.value }))}
+                    onChange={(event) => setProfileForm((prev) => ({ ...prev, name: lettersOnly(event.target.value) }))}
                     fullWidth
                     autoFocus
                   />
                   <TextField
                     label="Отчество"
                     value={profileForm.second_name}
-                    onChange={(event) => setProfileForm((prev) => ({ ...prev, second_name: event.target.value }))}
+                    onChange={(event) => setProfileForm((prev) => ({ ...prev, second_name: lettersOnly(event.target.value) }))}
                     fullWidth
                   />
                 </Stack>
@@ -289,12 +320,16 @@ export function Layout({
                   type="email"
                   value={profileForm.email}
                   onChange={(event) => setProfileForm((prev) => ({ ...prev, email: event.target.value }))}
+                  error={!!profileForm.email && !EMAIL_RE.test(profileForm.email)}
+                  helperText={profileForm.email && !EMAIL_RE.test(profileForm.email) ? 'Введите email в формате name@example.ru' : undefined}
                   fullWidth
                 />
                 <TextField
                   label="Телефон"
                   value={profileForm.phone}
-                  onChange={(event) => setProfileForm((prev) => ({ ...prev, phone: event.target.value }))}
+                  onChange={(event) => setProfileForm((prev) => ({ ...prev, phone: formatPhone(event.target.value) }))}
+                  error={!!profileForm.phone && !PHONE_RE.test(profileForm.phone)}
+                  helperText={profileForm.phone && !PHONE_RE.test(profileForm.phone) ? 'Формат: +7 (000) 000-00-00' : undefined}
                   fullWidth
                 />
                 <TextField
@@ -310,7 +345,7 @@ export function Layout({
         </DialogContent>
         <DialogActions sx={{ px: 3, py: 2 }}>
           <Button onClick={() => setProfileOpen(false)}>Отмена</Button>
-          <Button variant="contained" onClick={() => saveProfile.mutate(profileForm)} disabled={saveProfile.isPending}>
+          <Button variant="contained" onClick={() => saveProfile.mutate(profileForm)} disabled={saveProfile.isPending || invalidProfileContact}>
             Сохранить
           </Button>
         </DialogActions>
@@ -325,7 +360,18 @@ export function Layout({
             alignItems={{ xs: 'stretch', sm: 'center' }}
             spacing={2}
           >
-            <AppBreadcrumbs />
+            <Stack direction="row" spacing={0.75} alignItems="center" minWidth={0}>
+              {isMobile ? (
+                <IconButton
+                  aria-label="Открыть меню"
+                  onClick={() => setMobileDrawerOpen(true)}
+                  sx={{ color: 'text.primary', border: '1px solid', borderColor: 'divider', bgcolor: 'background.paper' }}
+                >
+                  <MenuIcon />
+                </IconButton>
+              ) : null}
+              <AppBreadcrumbs />
+            </Stack>
             {actions ? (
               <Stack direction="row" spacing={1.25} flexWrap="wrap" useFlexGap className="page-actions">
                 {actions}

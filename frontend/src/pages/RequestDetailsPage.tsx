@@ -32,10 +32,11 @@ import { api } from '../api/client';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useAppToast } from '../components/Layout';
 import { ItemStatusBadge, RequestStatusBadge } from '../components/StatusBadge';
-import type { BudgetItem, BudgetRequest, CatalogItem, FileAttachment, ItemStatus, User } from '../types';
+import type { BudgetItem, BudgetRequest, CatalogItem, FileAttachment, ItemStatus, Profile, User } from '../types';
 import { CLOSED_REQUEST_STATUSES } from '../types';
 import { downloadAuthorized, downloadBlob } from '../utils/download';
 import { itemStatusLabels, money } from '../utils/labels';
+import { normalizePositiveAmount } from '../utils/validation';
 
 function catalogLabel(item: CatalogItem, catalog: CatalogItem[]) {
   const parent = catalog.find((entry) => entry.id === item.parent_id);
@@ -49,8 +50,8 @@ function leafItems(catalog: CatalogItem[]) {
   return catalog.filter((item) => !hasChildren.has(item.id));
 }
 
-function categoryName(catalog: CatalogItem[], itemId?: string | null) {
-  const item = catalog.find((entry) => entry.id === itemId);
+function categoryName(catalog: CatalogItem[], articleId?: string | null) {
+  const item = catalog.find((entry) => entry.id === articleId);
   if (!item?.parent_id) return '—';
   return catalog.find((entry) => entry.id === item.parent_id)?.name || '—';
 }
@@ -58,6 +59,13 @@ function categoryName(catalog: CatalogItem[], itemId?: string | null) {
 function getErrorMessage(error: unknown, fallback: string) {
   const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
   return detail || (error instanceof Error ? error.message : fallback);
+}
+
+type CounterpartyContact = { user_id: string; login: string; role: 'economist' | 'employee'; profile: Profile | null };
+
+function contactName(contact: CounterpartyContact) {
+  const profile = contact.profile;
+  return [profile?.last_name, profile?.name, profile?.second_name].filter(Boolean).join(' ') || contact.login;
 }
 
 function ItemFilesCell({
@@ -169,17 +177,17 @@ function AddItemForm({
   const queryClient = useQueryClient();
   const options = useMemo(() => leafItems(catalog), [catalog]);
   const [article, setArticle] = useState<CatalogItem | null>(null);
-  const [sumPlan, setSumPlan] = useState(0);
+  const [sumPlan, setSumPlan] = useState('');
 
   const create = useMutation({
     mutationFn: () =>
       api.post(`/requests/${requestId}/${kind}-items`, {
         [kind === 'dds' ? 'dds_id' : 'invest_id']: article?.id,
-        sum_plan: sumPlan,
+        sum_plan: Number(sumPlan),
       }),
     onSuccess: () => {
       setArticle(null);
-      setSumPlan(0);
+      setSumPlan('');
       queryClient.invalidateQueries({ queryKey: ['request-details', requestId] });
     },
   });
@@ -204,13 +212,13 @@ function AddItemForm({
       />
       <TextField
         label="Плановая сумма"
-        type="number"
+        inputProps={{ inputMode: 'decimal' }}
         value={sumPlan}
-        onChange={(event) => setSumPlan(Number(event.target.value))}
+        onChange={(event) => setSumPlan(normalizePositiveAmount(event.target.value))}
         disabled={disabled}
         sx={{ minWidth: 160 }}
       />
-      <Button variant="contained" onClick={() => create.mutate()} disabled={disabled || !article || sumPlan <= 0 || create.isPending}>
+      <Button variant="contained" onClick={() => create.mutate()} disabled={disabled || !article || Number(sumPlan) <= 0 || create.isPending}>
         Добавить строку
       </Button>
     </Stack>
@@ -318,7 +326,26 @@ function ItemsTable({
             return (
               <TableRow key={item.id}>
                 <TableCell>{categoryName(catalog, catalogId)}</TableCell>
-                <TableCell>{catalog.find((entry) => entry.id === catalogId)?.name || catalogId}</TableCell>
+                <TableCell>
+                  {employeeCanEdit ? (
+                    <TextField
+                      select
+                      size="small"
+                      value={(kind === 'dds' ? local.dds_id : local.invest_id) || catalogId || ''}
+                      onChange={(event) =>
+                        setDrafts({
+                          ...drafts,
+                          [item.id]: { ...local, [kind === 'dds' ? 'dds_id' : 'invest_id']: event.target.value },
+                        })
+                      }
+                      sx={{ minWidth: 220 }}
+                    >
+                      {leafItems(catalog).map((entry) => <MenuItem key={entry.id} value={entry.id}>{catalogLabel(entry, catalog)}</MenuItem>)}
+                    </TextField>
+                  ) : (
+                    catalog.find((entry) => entry.id === catalogId)?.name || catalogId
+                  )}
+                </TableCell>
                 <TableCell>{money(item.sum_plan)}</TableCell>
                 <TableCell>
                   {canEconomist ? (
@@ -371,8 +398,8 @@ function ItemsTable({
                 </TableCell>
                 <TableCell align="right">
                   <Stack direction="row" spacing={0.5} justifyContent="flex-end" alignItems="center">
-                    {canEconomist ? (
-                      <Tooltip title="Сохранить">
+                    {canEconomist || employeeCanEdit ? (
+                      <Tooltip title="Сохранить изменения строки">
                         <IconButton
                           size="small"
                           color="primary"
@@ -434,6 +461,11 @@ export default function RequestDetailsPage({ user }: { user: User }) {
   const { data: request } = useQuery({
     queryKey: detailsKey,
     queryFn: async () => (await api.get<BudgetRequest>(`/requests/${id}`)).data,
+  });
+  const { data: counterparty } = useQuery({
+    queryKey: [...detailsKey, 'counterparty-contact'],
+    queryFn: async () => (await api.get<CounterpartyContact | null>(`/requests/${id}/counterparty-contact`)).data,
+    enabled: !!request && (user.role === 'economist' || user.role === 'employee'),
   });
   const { data: dds = [] } = useQuery({
     queryKey: [...detailsKey, 'dds'],
@@ -617,6 +649,20 @@ export default function RequestDetailsPage({ user }: { user: User }) {
             </Stack>
           </CardContent>
         </Card>
+
+        {counterparty ? (
+          <Paper className="surface-pad" elevation={0}>
+            <Stack spacing={0.75}>
+              <Typography variant="h6">{user.role === 'economist' ? 'Контакты сотрудника модуля' : 'Контакты экономиста'}</Typography>
+              <Typography fontWeight={700}>{contactName(counterparty)}</Typography>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 0.5, sm: 3 }} flexWrap="wrap" useFlexGap>
+                <Typography color="text.secondary">Телефон: {counterparty.profile?.phone || 'не указан'}</Typography>
+                <Typography color="text.secondary">Email: {counterparty.profile?.email || 'не указан'}</Typography>
+                {counterparty.profile?.max_link ? <Typography color="text.secondary">Max: {counterparty.profile.max_link}</Typography> : null}
+              </Stack>
+            </Stack>
+          </Paper>
+        ) : null}
 
         <Paper className={`surface-pad ${request.budget_frozen ? 'budget-frozen-surface' : ''}`} elevation={0}>
           <ItemsTable title="Строки ДДС" kind="dds" request={request} user={user} items={dds} catalog={ddsCatalog} />

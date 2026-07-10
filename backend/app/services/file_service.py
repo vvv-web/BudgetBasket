@@ -42,7 +42,7 @@ class FileService:
         return cleaned or "file"
 
     def storage_key(self, request_id: str, item_type: str, item_id: str, original_name: str) -> str:
-        return f"budget-items/{request_id}/{item_type}/{item_id}/{uuid4()}-{self.safe_original_name(original_name)}"
+        return f"budget-items/{uuid4()}-{self.safe_original_name(original_name)}"
 
     def _allowed_mime(self, original_name: str, content_type: str | None) -> str:
         expected_mime, _ = mimetypes.guess_type(original_name)

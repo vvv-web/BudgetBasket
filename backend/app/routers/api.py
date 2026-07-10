@@ -249,16 +249,34 @@ def list_requests(
     return request.app.state.request_service.list_requests(user, status, unit_id, created_from, created_to)
 
 
+@router.get("/dashboard")
+def dashboard(request: Request, user: User, unit_id: str | None = None):
+    return request.app.state.request_service.dashboard(user, unit_id)
+
+
 @router.get("/requests/export/closed")
 @router.get("/requests/export/fixed")
-def export_closed_requests(request: Request, user: User, unit_id: str | None = None):
-    path = request.app.state.excel_service.export_closed_requests(user, unit_id)
-    return FileResponse(path, filename=path.name, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+def export_closed_requests(
+    request: Request,
+    user: User,
+    unit_id: str | None = None,
+    statuses: str | None = None,
+    include_files: bool = False,
+):
+    selected_statuses = {status.strip() for status in statuses.split(",") if status.strip()} if statuses else None
+    path = request.app.state.excel_service.export_closed_requests(user, unit_id, selected_statuses, include_files)
+    media_type = "application/zip" if path.suffix == ".zip" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return FileResponse(path, filename=path.name, media_type=media_type)
 
 
 @router.get("/requests/{request_id}")
 def get_request(request: Request, request_id: str, user: User):
     return request.app.state.request_service.get_request(user, request_id)
+
+
+@router.get("/requests/{request_id}/counterparty-contact")
+def counterparty_contact(request: Request, request_id: str, user: User):
+    return request.app.state.request_service.counterparty_contact(user, request_id)
 
 
 @router.post("/requests")

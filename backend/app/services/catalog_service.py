@@ -61,6 +61,15 @@ class CatalogService:
         if duplicate:
             raise HTTPException(status_code=400, detail="Запись с такой категорией, наименованием и подразделением уже существует")
 
+    def _validate_parent_category(self, collection: str, parent_id: str | None, unit_id: str | None) -> None:
+        if not parent_id:
+            return
+        parent = self.repo.get_by_id(collection, parent_id)
+        if not parent or parent.get("parent_id"):
+            raise HTTPException(status_code=400, detail="Для статьи выберите существующую категорию")
+        if not self._same_id(parent.get("unit_id"), unit_id):
+            raise HTTPException(status_code=400, detail="Категория должна относиться к тому же подразделению, что и статья")
+
     def list_catalog(
         self,
         collection: str,
@@ -103,6 +112,7 @@ class CatalogService:
             "is_active": payload.get("is_active", True),
             "unit_id": unit_id,
         }
+        self._validate_parent_category(collection, item["parent_id"], item["unit_id"])
         self._ensure_unique_item(collection, parent_id=item["parent_id"], unit_id=item["unit_id"], name=item["name"])
         return self.repo.create(collection, item)
 
@@ -116,6 +126,21 @@ class CatalogService:
             allowed["unit_id"] = self.department_id_for_unit(allowed["unit_id"])
         merged = {**current, **allowed}
         merged["unit_id"] = merged.get("unit_id") or self._default_department_id()
+        references_collection = "dds_items" if collection == "dds_catalog" else "invest_items"
+        reference_field = "dds_id" if collection == "dds_catalog" else "invest_id"
+        is_used = any(
+            item.get(reference_field) == item_id or item.get("category_id") == item_id
+            for item in self.repo.load_all(references_collection)
+        )
+        if is_used and (
+            not self._same_id(current.get("parent_id"), merged.get("parent_id"))
+            or not self._same_id(current.get("unit_id"), merged.get("unit_id"))
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Нельзя переместить запись НСИ, пока она используется в заявках. Создайте нужную категорию и перенесите строку черновика на другую статью.",
+            )
+        self._validate_parent_category(collection, merged.get("parent_id"), merged.get("unit_id"))
         self._ensure_unique_item(
             collection,
             parent_id=merged.get("parent_id"),
@@ -136,9 +161,9 @@ class CatalogService:
         if any(item.get(reference_field) == item_id or item.get("category_id") == item_id for item in self.repo.load_all(references_collection)):
             raise HTTPException(status_code=400, detail="Нельзя удалить запись, пока она используется в заявках")
 
-        for item in self.repo.load_all(collection):
-            if item.get("parent_id") == item_id:
-                self.repo.update(collection, item["id"], {"parent_id": None})
+        if any(item.get("parent_id") == item_id for item in self.repo.load_all(collection)):
+            raise HTTPException(status_code=400, detail="Нельзя удалить категорию, пока в ней есть статьи. Сначала перенесите статьи в другую категорию")
+
         self.repo.delete(collection, item_id)
 
     def list_mappings(self, collection: str) -> list[dict]:

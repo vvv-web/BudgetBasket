@@ -31,6 +31,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useAppToast, usePageChromeActions } from '../components/Layout';
 import type { Role, User } from '../types';
 import { roleLabels } from '../utils/labels';
+import { EMAIL_RE, PHONE_RE, formatPhone, lettersOnly } from '../utils/validation';
 
 const emptyForm = {
   login: '',
@@ -126,6 +127,7 @@ function CreateUserDialog({
   const setField = <K extends keyof CreateForm>(key: K, value: CreateForm[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
+  const invalidContact = (form.email && !EMAIL_RE.test(form.email)) || (form.phone && !PHONE_RE.test(form.phone));
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm" className="profile-dialog">
@@ -147,18 +149,18 @@ function CreateUserDialog({
       >
         <Stack spacing={0} sx={{ px: 3, py: 2.5 }}>
           <ProfileSection title="Основное">
-            <TextField label="Фамилия" value={form.last_name} onChange={(e) => setField('last_name', e.target.value)} fullWidth />
+            <TextField label="Фамилия" value={form.last_name} onChange={(e) => setField('last_name', lettersOnly(e.target.value))} fullWidth />
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.75}>
-              <TextField label="Имя" value={form.name} onChange={(e) => setField('name', e.target.value)} fullWidth autoFocus />
-              <TextField label="Отчество" value={form.second_name} onChange={(e) => setField('second_name', e.target.value)} fullWidth />
+              <TextField label="Имя" value={form.name} onChange={(e) => setField('name', lettersOnly(e.target.value))} fullWidth autoFocus />
+              <TextField label="Отчество" value={form.second_name} onChange={(e) => setField('second_name', lettersOnly(e.target.value))} fullWidth />
             </Stack>
           </ProfileSection>
 
           <Divider sx={{ my: 2.5 }} />
 
           <ProfileSection title="Контакты">
-            <TextField label="Email" type="email" value={form.email} onChange={(e) => setField('email', e.target.value)} fullWidth />
-            <TextField label="Телефон" value={form.phone} onChange={(e) => setField('phone', e.target.value)} fullWidth />
+            <TextField label="Email" type="email" value={form.email} onChange={(e) => setField('email', e.target.value)} error={!!form.email && !EMAIL_RE.test(form.email)} helperText={form.email && !EMAIL_RE.test(form.email) ? 'Введите email в формате name@example.ru' : undefined} fullWidth />
+            <TextField label="Телефон" value={form.phone} onChange={(e) => setField('phone', formatPhone(e.target.value))} error={!!form.phone && !PHONE_RE.test(form.phone)} helperText={form.phone && !PHONE_RE.test(form.phone) ? 'Формат: +7 (000) 000-00-00' : undefined} fullWidth />
             <TextField
               label="Ссылка Max"
               value={form.max_link}
@@ -187,7 +189,7 @@ function CreateUserDialog({
           startIcon={<AddIcon />}
           variant="contained"
           onClick={() => create.mutate()}
-          disabled={!form.login || !form.password || create.isPending}
+          disabled={!form.login || !form.password || invalidContact || create.isPending}
         >
           Создать профиль
         </Button>
@@ -202,17 +204,19 @@ function UserTableCell({
   onChange,
   placeholder,
   type = 'text',
+  error = false,
 }: {
   editing: boolean;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
   type?: string;
+  error?: boolean;
 }) {
   if (!editing) {
     return <>{value || '—'}</>;
   }
-  return <TextField size="small" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} type={type} fullWidth />;
+  return <TextField size="small" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} type={type} error={error} fullWidth />;
 }
 
 export default function UsersPage() {
@@ -294,6 +298,7 @@ export default function UsersPage() {
             {data.map((user) => {
               const editing = editingId === user.id;
               const row = editing ? draft : draftFromUser(user);
+              const invalidContact = (!!row.email && !EMAIL_RE.test(row.email)) || (!!row.phone && !PHONE_RE.test(row.phone));
               return (
                 <TableRow key={user.id} hover>
                   <TableCell sx={{ minWidth: 160 }}>
@@ -317,19 +322,19 @@ export default function UsersPage() {
                     )}
                   </TableCell>
                   <TableCell sx={{ minWidth: 150 }}>
-                    <UserTableCell editing={editing} value={row.last_name} onChange={(value) => setDraft((prev) => ({ ...prev, last_name: value }))} />
+                    <UserTableCell editing={editing} value={row.last_name} onChange={(value) => setDraft((prev) => ({ ...prev, last_name: lettersOnly(value) }))} />
                   </TableCell>
                   <TableCell sx={{ minWidth: 150 }}>
-                    <UserTableCell editing={editing} value={row.name} onChange={(value) => setDraft((prev) => ({ ...prev, name: value }))} />
+                    <UserTableCell editing={editing} value={row.name} onChange={(value) => setDraft((prev) => ({ ...prev, name: lettersOnly(value) }))} />
                   </TableCell>
                   <TableCell sx={{ minWidth: 170 }}>
-                    <UserTableCell editing={editing} value={row.second_name} onChange={(value) => setDraft((prev) => ({ ...prev, second_name: value }))} />
+                    <UserTableCell editing={editing} value={row.second_name} onChange={(value) => setDraft((prev) => ({ ...prev, second_name: lettersOnly(value) }))} />
                   </TableCell>
                   <TableCell sx={{ minWidth: 170 }}>
-                    <UserTableCell editing={editing} value={row.phone} onChange={(value) => setDraft((prev) => ({ ...prev, phone: value }))} />
+                    <UserTableCell editing={editing} value={row.phone} onChange={(value) => setDraft((prev) => ({ ...prev, phone: formatPhone(value) }))} error={!!row.phone && !PHONE_RE.test(row.phone)} />
                   </TableCell>
                   <TableCell sx={{ minWidth: 220 }}>
-                    <UserTableCell editing={editing} value={row.email} onChange={(value) => setDraft((prev) => ({ ...prev, email: value }))} type="email" />
+                    <UserTableCell editing={editing} value={row.email} onChange={(value) => setDraft((prev) => ({ ...prev, email: value }))} type="email" error={!!row.email && !EMAIL_RE.test(row.email)} />
                   </TableCell>
                   <TableCell sx={{ minWidth: 240 }}>
                     <UserTableCell editing={editing} value={row.max_link} onChange={(value) => setDraft((prev) => ({ ...prev, max_link: value }))} placeholder="https://max.ru/..." />
@@ -342,7 +347,7 @@ export default function UsersPage() {
                             <IconButton
                               color="primary"
                               onClick={() => saveUser.mutate({ id: user.id, body: draft })}
-                              disabled={!draft.login.trim() || saveUser.isPending}
+                              disabled={!draft.login.trim() || invalidContact || saveUser.isPending}
                               aria-label="Сохранить"
                             >
                               <CheckIcon fontSize="small" />

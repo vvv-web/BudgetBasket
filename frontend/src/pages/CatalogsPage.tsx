@@ -103,6 +103,7 @@ function CatalogManageDialog({
   kind,
   units,
   categories,
+  departmentId,
   onChanged,
 }: {
   open: boolean;
@@ -110,15 +111,13 @@ function CatalogManageDialog({
   kind: CatalogKind;
   units: Unit[];
   categories: CatalogItem[];
+  departmentId: string;
   onChanged: () => void;
 }) {
   const toast = useAppToast();
   const meta = catalogMeta[kind];
   const departments = units.filter((unit) => unit.type === 'department' || !unit.parent_id);
-  const categoryNames = useMemo(() => {
-    const names = new Set(categories.map((item) => item.name));
-    return Array.from(names).sort((a, b) => a.localeCompare(b, 'ru'));
-  }, [categories]);
+  const categoryNames = useMemo(() => categories.map((item) => item.name).sort((a, b) => a.localeCompare(b, 'ru')), [categories]);
 
   const [rows, setRows] = useState<ManualRow[]>([emptyRow()]);
   const [importResult, setImportResult] = useState<{ created: number; updated: number; errors: string[] } | null>(null);
@@ -126,11 +125,11 @@ function CatalogManageDialog({
 
   useEffect(() => {
     if (open) {
-      setRows([emptyRow()]);
+      setRows([{ ...emptyRow(), unit_id: departmentId }]);
       setImportResult(null);
       setCreateResult(null);
     }
-  }, [open, kind]);
+  }, [open, kind, departmentId]);
 
   const updateRow = (id: string, patch: Partial<ManualRow>) => {
     setRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)));
@@ -142,7 +141,6 @@ function CatalogManageDialog({
       if (!prepared.length) {
         throw new Error('Заполните хотя бы одну строку');
       }
-      const knownCategories = [...categories];
       const errors: string[] = [];
       let created = 0;
       for (const [index, row] of prepared.entries()) {
@@ -154,27 +152,19 @@ function CatalogManageDialog({
         try {
           let parentId: string | null = null;
           if (row.category.trim()) {
-            const existing = knownCategories.find(
+            const existing = categories.find(
               (item) => item.name.trim().toLowerCase() === row.category.trim().toLowerCase(),
             );
             if (existing) {
               parentId = existing.id;
             } else {
-              const createdCategory = (
-                await api.post<CatalogItem>(meta.path, {
-                  parent_id: null,
-                  unit_id: row.unit_id || null,
-                  name: row.category.trim(),
-                  is_active: true,
-                })
-              ).data;
-              parentId = createdCategory.id;
-              knownCategories.push(createdCategory);
+              errors.push(`Строка ${line}: сначала создайте категорию «${row.category.trim()}» в выбранном подразделении`);
+              continue;
             }
           }
           await api.post(meta.path, {
             parent_id: parentId,
-            unit_id: row.unit_id || null,
+            unit_id: departmentId,
             name: row.name.trim(),
             is_active: row.is_active,
           });
@@ -296,15 +286,14 @@ function CatalogManageDialog({
                     <TableRow key={row.id} hover>
                       <TableCell>
                         <Autocomplete
-                          freeSolo
                           options={categoryNames}
-                          value={row.category}
-                          onInputChange={(_, value) => updateRow(row.id, { category: value })}
+                          value={row.category || null}
+                          onChange={(_, value) => updateRow(row.id, { category: value || '' })}
                           renderInput={(params) => (
                             <TextField
                               {...params}
                               size="small"
-                              placeholder="Категория"
+                              placeholder="Выберите категорию"
                               sx={cellFieldSx}
                             />
                           )}
@@ -324,14 +313,12 @@ function CatalogManageDialog({
                         <TextField
                           select
                           size="small"
-                          value={row.unit_id}
-                          onChange={(event) => updateRow(row.id, { unit_id: event.target.value })}
+                          value={departmentId}
                           fullWidth
                           sx={cellFieldSx}
                           SelectProps={{ displayEmpty: true }}
                         >
-                          <MenuItem value="">По умолчанию</MenuItem>
-                          {departments.map((unit) => (
+                          {departments.filter((unit) => unit.id === departmentId).map((unit) => (
                             <MenuItem key={unit.id} value={unit.id}>{unit.name}</MenuItem>
                           ))}
                         </TextField>
@@ -417,11 +404,13 @@ function CatalogCellText({
 function CatalogPanel({
   kind,
   units,
+  departmentId,
   dialogOpen,
   onDialogOpenChange,
 }: {
   kind: CatalogKind;
   units: Unit[];
+  departmentId: string;
   dialogOpen: boolean;
   onDialogOpenChange: (open: boolean) => void;
 }) {
@@ -429,8 +418,8 @@ function CatalogPanel({
   const meta = catalogMeta[kind];
   const queryClient = useQueryClient();
   const { data = [] } = useQuery({
-    queryKey: [meta.path],
-    queryFn: async () => (await api.get<CatalogItem[]>(meta.path)).data,
+    queryKey: [meta.path, departmentId],
+    queryFn: async () => (await api.get<CatalogItem[]>(meta.path, { params: { unit_id: departmentId || undefined } })).data,
   });
 
   const rootCategories = useMemo(() => data.filter((item) => !item.parent_id), [data]);
@@ -658,6 +647,7 @@ function CatalogPanel({
         kind={kind}
         units={units}
         categories={rootCategories}
+        departmentId={departmentId}
         onChanged={refresh}
       />
 
@@ -679,25 +669,36 @@ function CatalogPanel({
 export default function CatalogsPage() {
   const [tab, setTab] = useState<CatalogKind>('dds');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [departmentId, setDepartmentId] = useState('');
   const { data: units = [] } = useQuery({
     queryKey: ['units'],
     queryFn: async () => (await api.get<Unit[]>('/units')).data,
   });
+  const departments = useMemo(() => units.filter((unit) => unit.type === 'department' || !unit.parent_id), [units]);
+
+  useEffect(() => {
+    if (!departmentId && departments.length) setDepartmentId(departments[0].id);
+  }, [departmentId, departments]);
 
   return (
     <Stack spacing={3}>
       <Paper className="surface-pad" sx={{ py: 0, px: 1.5 }}>
-        <Stack direction={{ xs: 'column', sm: 'row' }} alignItems={{ sm: 'center' }} justifyContent="space-between" spacing={1.5}>
+        <Stack direction={{ xs: 'column', md: 'row' }} alignItems={{ md: 'center' }} justifyContent="space-between" spacing={1.5}>
           <Tabs value={tab} onChange={(_, value: CatalogKind) => setTab(value)} sx={{ minHeight: 56 }}>
             <Tab value="dds" label="Статьи ДДС" />
             <Tab value="invests" label="Инвест-проекты" />
           </Tabs>
-          <Button startIcon={<AddIcon />} variant="contained" onClick={() => setDialogOpen(true)} sx={{ mb: { sm: 0.5 } }}>
-            Добавить / импорт
-          </Button>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
+            <TextField select size="small" label="Подразделение" value={departmentId} onChange={(event) => setDepartmentId(event.target.value)} sx={{ minWidth: 280 }}>
+              {departments.map((unit) => <MenuItem key={unit.id} value={unit.id}>{unit.name}</MenuItem>)}
+            </TextField>
+            <Button startIcon={<AddIcon />} variant="contained" onClick={() => setDialogOpen(true)} disabled={!departmentId}>
+              Добавить / импорт
+            </Button>
+          </Stack>
         </Stack>
       </Paper>
-      <CatalogPanel kind={tab} units={units} dialogOpen={dialogOpen} onDialogOpenChange={setDialogOpen} />
+      <CatalogPanel kind={tab} units={units} departmentId={departmentId} dialogOpen={dialogOpen} onDialogOpenChange={setDialogOpen} />
     </Stack>
   );
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import zipfile
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -9,8 +10,10 @@ from fastapi import HTTPException, UploadFile
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
+from app.models import EXPORTABLE_REQUEST_STATUSES
 from app.repositories.base import Repository
 from app.services.common import get_required, require_role
+from app.services.file_service import FileService
 from app.services.permission_service import PermissionService
 from app.services.request_service import RequestService
 
@@ -23,6 +26,7 @@ REQUEST_STATUS_LABELS = {
     "draft": "Черновик",
     "on_review": "На проверке",
     "approved": "Утверждена",
+    "approved_with_changes": "Утверждена с изменениями",
     "partially_approved": "Частично утверждена",
     "rejected": "Отклонена",
     "cancelled": "Отменена",
@@ -42,11 +46,13 @@ class ExcelService:
         repo: Repository,
         permissions: PermissionService,
         requests: RequestService,
+        files: FileService,
         export_dir: Path,
     ):
         self.repo = repo
         self.permissions = permissions
         self.requests = requests
+        self.files = files
         self.export_dir = export_dir
         self.export_dir.mkdir(parents=True, exist_ok=True)
 
@@ -317,6 +323,19 @@ class ExcelService:
         unit = self.repo.get_by_id("units", unit_id)
         return unit.get("name", unit_id) if unit else unit_id
 
+    def _department_name(self, unit_id: str | None) -> str:
+        current_id = unit_id
+        visited: set[str] = set()
+        while current_id and current_id not in visited:
+            visited.add(current_id)
+            unit = self.repo.get_by_id("units", current_id)
+            if not unit:
+                return current_id
+            if not unit.get("parent_id"):
+                return unit.get("name", current_id)
+            current_id = unit["parent_id"]
+        return ""
+
     def _catalog_name(self, collection: str, item_id: str | None) -> str:
         if not item_id:
             return ""
@@ -326,8 +345,6 @@ class ExcelService:
         return item["name"]
 
     def _category_name(self, collection: str, item_id: str | None, category_id: str | None = None) -> str:
-        if category_id:
-            return self._catalog_name(collection, category_id)
         if not item_id:
             return ""
         item = self.repo.get_by_id(collection, item_id)
@@ -350,8 +367,9 @@ class ExcelService:
                 rows.append(
                     {
                         "kind": kind,
+                        "item_id": item["id"],
                         "article": self._catalog_name(catalog, item.get(field)),
-                        "category": self._category_name(catalog, item.get(field), item.get("category_id")),
+                        "category": self._category_name(catalog, item.get(field)),
                         "sum_plan": float(item.get("sum_plan") or 0),
                         "sum_fact": item.get("sum_fact"),
                         "status": ITEM_STATUS_LABELS.get(item.get("status"), item.get("status") or ""),
@@ -360,7 +378,7 @@ class ExcelService:
                 )
         return rows
 
-    CLOSED_STATUSES = {"approved", "partially_approved", "rejected"}
+    CLOSED_STATUSES = {status.value for status in EXPORTABLE_REQUEST_STATUSES}
 
     def export_closed_request(self, user: dict, request_id: str) -> Path:
         request = get_required(self.repo, "requests", request_id)
@@ -369,16 +387,29 @@ class ExcelService:
             raise HTTPException(status_code=400, detail="Экспорт доступен только для закрытых заявок")
         return self._write_request_workbook([request], f"request_{request_id[:8]}.xlsx")
 
-    def export_closed_requests(self, user: dict, unit_id: str | None = None) -> Path:
+    def export_closed_requests(
+        self,
+        user: dict,
+        unit_id: str | None = None,
+        statuses: set[str] | None = None,
+        include_files: bool = False,
+    ) -> Path:
+        selected_statuses = self.CLOSED_STATUSES if statuses is None else statuses
+        if not selected_statuses or not selected_statuses.issubset(self.CLOSED_STATUSES):
+            raise HTTPException(status_code=400, detail="Выберите допустимые статусы для экспорта")
         requests = [
             item
-            for status in self.CLOSED_STATUSES
+            for status in selected_statuses
             for item in self.requests.list_requests(user, status=status, unit_id=unit_id)
         ]
         if not requests:
             raise HTTPException(status_code=404, detail="Нет закрытых заявок для экспорта")
         suffix = re.sub(r"[^a-zA-Z0-9_-]+", "", unit_id or "all")[:24] or "all"
-        return self._write_request_workbook(requests, f"closed_requests_{suffix}.xlsx")
+        attachments = self._collect_export_attachments(requests) if include_files else []
+        workbook = self._write_request_workbook(requests, "Утверждение_бюджета.xlsx", attachments)
+        if not include_files:
+            return workbook
+        return self._write_export_archive(user, workbook, attachments)
 
     # Compat aliases
     def export_fixed_request(self, user: dict, request_id: str) -> Path:
@@ -387,89 +418,156 @@ class ExcelService:
     def export_fixed_requests(self, user: dict, unit_id: str | None = None) -> Path:
         return self.export_closed_requests(user, unit_id)
 
-    def _write_request_workbook(self, requests: list[dict], filename: str) -> Path:
+    def _collect_export_attachments(self, requests: list[dict]) -> list[dict]:
+        request_ids = {item["id"] for item in requests}
+        requests_by_id = {item["id"]: item for item in requests}
+        items = {
+            "dds": {item["id"]: item for item in self.repo.load_all("dds_items") if item.get("request_id") in request_ids},
+            "invest": {item["id"]: item for item in self.repo.load_all("invest_items") if item.get("request_id") in request_ids},
+        }
+        links = {
+            "dds": self.repo.load_all("dds_item_files"),
+            "invest": self.repo.load_all("invest_item_files"),
+        }
+        files = {item["id"]: item for item in self.repo.load_all("files")}
+        catalogs = {
+            "dds": {item["id"]: item for item in self.repo.load_all("dds_catalog")},
+            "invest": {item["id"]: item for item in self.repo.load_all("invests_catalog")},
+        }
+        attachments = []
+        written: set[str] = set()
+        for kind, item_map in items.items():
+            item_key = "dds_item_id" if kind == "dds" else "invest_item_id"
+            article_key = "dds_id" if kind == "dds" else "invest_id"
+            for link in links[kind]:
+                item = item_map.get(link.get(item_key))
+                file = files.get(link.get("file_id"))
+                if not item or not file:
+                    continue
+                request = requests_by_id[item["request_id"]]
+                module_name = self._archive_name(self._unit_name(request.get("unit_id")), "Модуль")
+                article = catalogs[kind].get(item.get(article_key), {})
+                article_name = self._archive_name(article.get("name"), "Статья")
+                original_name = self._archive_name(file["original_name"], "Файл")
+                archive_path = f"Приложения/{module_name}/{article_name}/{original_name}"
+                duplicate_index = 2
+                base_path = archive_path
+                while archive_path in written:
+                    archive_path = f"{base_path}_{duplicate_index}"
+                    duplicate_index += 1
+                written.add(archive_path)
+                attachments.append(
+                    {
+                        "file_id": file["id"],
+                        "item_id": item["id"],
+                        "module_name": module_name,
+                        "article_name": article_name,
+                        "original_name": original_name,
+                        "archive_path": archive_path,
+                    }
+                )
+        return attachments
+
+    def _write_export_archive(self, user: dict, workbook: Path, attachments: list[dict]) -> Path:
+        archive = self.export_dir / "Утверждение_бюджета.zip"
+
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+            bundle.write(workbook, arcname="Утверждение_бюджета.xlsx")
+            for attachment in attachments:
+                body, _file, _storage, _size, _content_type = self.files.download(user, attachment["file_id"])
+                try:
+                    content = body.read()
+                finally:
+                    close = getattr(body, "close", None)
+                    if callable(close):
+                        close()
+                bundle.writestr(attachment["archive_path"], content)
+        return archive
+
+    @staticmethod
+    def _archive_name(value: Any, fallback: str) -> str:
+        name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", str(value or "").strip()).strip(". ")
+        return name or fallback
+
+    def _write_request_workbook(self, requests: list[dict], filename: str, attachments: list[dict] | None = None) -> Path:
         wb = Workbook()
+        attachments_by_item: dict[str, list[dict]] = {}
+        for attachment in attachments or []:
+            attachments_by_item.setdefault(attachment["item_id"], []).append(attachment)
+        max_attachments = max((len(items) for items in attachments_by_item.values()), default=0)
+        attachment_headers = [f"Приложение {index}" for index in range(1, max_attachments + 1)]
 
         composition = wb.active
         composition.title = "Состав"
         self._style_header(
             composition,
             [
-                "ID заявки",
+                "Подразделение",
                 "Модуль",
                 "Статус заявки",
                 "Тип",
                 "Категория",
                 "Статья / проект",
+                "ID заявки",
                 "План",
                 "Факт",
                 "Статус строки",
                 "Комментарий",
+                *attachment_headers,
             ],
         )
         for request in requests:
             module_name = self._unit_name(request.get("unit_id"))
+            department_name = self._department_name(request.get("unit_id"))
             request_status = REQUEST_STATUS_LABELS.get(request.get("status"), request.get("status") or "")
             items = self._request_items(request["id"])
             if not items:
                 composition.append(
                     [
-                        request["id"],
+                        department_name,
                         module_name,
                         request_status,
                         "",
                         "",
                         "Строки отсутствуют",
+                        request["id"],
                         0,
                         None,
                         "",
                         "",
+                        *([""] * max_attachments),
                     ]
                 )
                 continue
             for item in items:
+                row_attachments = attachments_by_item.get(item["item_id"], [])
                 composition.append(
                     [
-                        request["id"],
+                        department_name,
                         module_name,
                         request_status,
                         item["kind"],
                         item["category"],
                         item["article"],
+                        request["id"],
                         item["sum_plan"],
                         item["sum_fact"],
                         item["status"],
                         item["comment"],
+                        *[attachment["original_name"] for attachment in row_attachments],
+                        *([""] * (max_attachments - len(row_attachments))),
                     ]
                 )
-        for col in (7, 8):
+                for index, attachment in enumerate(row_attachments, start=12):
+                    file_cell = composition.cell(composition.max_row, index)
+                    file_cell.hyperlink = attachment["archive_path"]
+                    file_cell.style = "Hyperlink"
+        for col in (8, 9):
             for row in range(2, composition.max_row + 1):
                 composition.cell(row, col).number_format = MONEY_FORMAT
         self._autosize(composition)
-
-        summary = wb.create_sheet("Сводка")
-        self._style_header(
-            summary,
-            ["ID заявки", "Модуль", "Статус", "План", "Утверждено", "Строк", "Принято", "Отказано"],
-        )
-        for request in requests:
-            stats = request.get("summary") or self.requests.summary(request["id"])
-            summary.append(
-                [
-                    request["id"],
-                    self._unit_name(request.get("unit_id")),
-                    REQUEST_STATUS_LABELS.get(request.get("status"), request.get("status") or ""),
-                    stats.get("planned_sum", 0),
-                    stats.get("approved_sum", request.get("sum", 0)),
-                    stats.get("items_count", 0),
-                    stats.get("accepted_count", 0),
-                    stats.get("rejected_count", 0),
-                ]
-            )
-        for col in (4, 5):
-            for row in range(2, summary.max_row + 1):
-                summary.cell(row, col).number_format = MONEY_FORMAT
-        self._autosize(summary)
+        composition.auto_filter.ref = f"A1:F{composition.max_row}"
+        composition.freeze_panes = "A2"
 
         target = self.export_dir / filename
         wb.save(target)

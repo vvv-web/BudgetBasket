@@ -1,12 +1,23 @@
 import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
+import UndoIcon from '@mui/icons-material/Undo';
 import Alert from '@mui/material/Alert';
 import Button from '@mui/material/Button';
+import Checkbox from '@mui/material/Checkbox';
+import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContent from '@mui/material/DialogContent';
+import DialogTitle from '@mui/material/DialogTitle';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import FormGroup from '@mui/material/FormGroup';
 import IconButton from '@mui/material/IconButton';
 import MenuItem from '@mui/material/MenuItem';
 import Paper from '@mui/material/Paper';
 import Stack from '@mui/material/Stack';
+import Switch from '@mui/material/Switch';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
@@ -23,7 +34,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { RequestStatusBadge } from '../components/StatusBadge';
 import { useAppToast } from '../components/Layout';
 import type { BudgetItem, BudgetRequest, CatalogItem, Unit, User } from '../types';
-import { CLOSED_REQUEST_STATUSES } from '../types';
+import { CLOSED_REQUEST_STATUSES, EXPORTABLE_REQUEST_STATUSES } from '../types';
 import { downloadBlob } from '../utils/download';
 import { money, requestStatusLabels } from '../utils/labels';
 
@@ -123,6 +134,13 @@ export default function RequestsPage({ user }: { user: User }) {
   const [createError, setCreateError] = useState('');
   const [requestDraft, setRequestDraft] = useState({ unit_id: '' });
   const [exportError, setExportError] = useState('');
+  const [exportOpen, setExportOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [exportSettings, setExportSettings] = useState({
+    statuses: [...EXPORTABLE_REQUEST_STATUSES],
+    unit_id: '',
+    include_files: false,
+  });
   const [deleteTarget, setDeleteTarget] = useState<BudgetRequest | null>(null);
   const deleteTargetId = deleteTarget?.id || '';
 
@@ -199,14 +217,13 @@ export default function RequestsPage({ user }: { user: User }) {
     }
   }, [employeeModules, requestDraft.unit_id, user.role]);
 
-  const closedCount = data.filter((item) => CLOSED_REQUEST_STATUSES.includes(item.status)).length;
-
   const create = useMutation({
     mutationFn: () => api.post<BudgetRequest>('/requests', requestDraft),
     onSuccess: (response) => {
       setCreateError('');
       queryClient.invalidateQueries({ queryKey: ['requests'] });
       toast('Заявка создана', 'success');
+      setCreateOpen(false);
       navigate(`/requests/${response.data.id}`);
     },
     onError: (error) => {
@@ -227,17 +244,40 @@ export default function RequestsPage({ user }: { user: User }) {
     },
   });
 
+  const withdrawRequest = useMutation({
+    mutationFn: (requestId: string) => api.post(`/requests/${requestId}/withdraw`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['requests'] });
+      toast('Заявка отозвана в черновик', 'success');
+    },
+    onError: (error) => toast(getErrorMessage(error, 'Не удалось отозвать заявку'), 'error'),
+  });
+
   const exportClosed = async () => {
     setExportError('');
     try {
       const response = await api.get('/requests/export/closed', {
-        params: { unit_id: filters.unit_id || undefined },
+        params: {
+          unit_id: exportSettings.unit_id || undefined,
+          statuses: exportSettings.statuses.join(','),
+          include_files: exportSettings.include_files,
+        },
         responseType: 'blob',
       });
-      downloadBlob(response.data, 'closed_requests.xlsx');
+      downloadBlob(response.data, exportSettings.include_files ? 'Утверждение_бюджета.zip' : 'Утверждение_бюджета.xlsx');
+      setExportOpen(false);
     } catch {
-      setExportError('Нет закрытых заявок для экспорта или недостаточно прав.');
+      setExportError('Нет заявок для выбранных настроек экспорта или недостаточно прав.');
     }
+  };
+
+  const toggleExportStatus = (status: typeof EXPORTABLE_REQUEST_STATUSES[number]) => {
+    setExportSettings((current) => ({
+      ...current,
+      statuses: current.statuses.includes(status)
+        ? current.statuses.filter((item) => item !== status)
+        : [...current.statuses, status],
+    }));
   };
 
   const deletePreviewRows = useMemo(() => {
@@ -259,18 +299,6 @@ export default function RequestsPage({ user }: { user: User }) {
       {exportError && <Alert severity="warning">{exportError}</Alert>}
       {createError && <Alert severity="error">{createError}</Alert>}
 
-      <RequestCreatePanel
-        user={user}
-        employeeModules={employeeModules}
-        unitId={requestDraft.unit_id}
-        onUnitIdChange={(value) => setRequestDraft({ unit_id: value })}
-        pending={create.isPending}
-        onCreate={() => {
-          if (!requestDraft.unit_id) return;
-          create.mutate();
-        }}
-      />
-
       <Paper className="surface-pad" elevation={0}>
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }} justifyContent="space-between">
           <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ flex: 1 }}>
@@ -291,16 +319,94 @@ export default function RequestsPage({ user }: { user: User }) {
               ))}
             </TextField>
           </Stack>
-          <Button
-            startIcon={<FileDownloadIcon />}
-            variant="outlined"
-            onClick={exportClosed}
-            disabled={closedCount === 0 && !CLOSED_REQUEST_STATUSES.includes(filters.status as typeof CLOSED_REQUEST_STATUSES[number])}
-          >
-            Экспорт закрытых
-          </Button>
+          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+            {user.role === 'employee' ? (
+              <Button startIcon={<AddIcon />} variant="contained" onClick={() => setCreateOpen(true)} disabled={employeeModules.length === 0}>
+                Добавить заявку
+              </Button>
+            ) : null}
+            <Button startIcon={<TuneOutlinedIcon />} variant="outlined" onClick={() => setExportOpen(true)}>
+              Настроить экспорт
+            </Button>
+          </Stack>
         </Stack>
       </Paper>
+
+      <Dialog open={createOpen} onClose={() => setCreateOpen(false)} fullWidth maxWidth="sm" className="profile-dialog">
+        <DialogTitle>Добавить заявку</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={1.5} sx={{ pt: 0.5 }}>
+            <Typography color="text.secondary">Выберите модуль, для которого нужно сформировать бюджетную заявку.</Typography>
+            <TextField select label="Модуль" value={requestDraft.unit_id} onChange={(event) => setRequestDraft({ unit_id: event.target.value })} fullWidth>
+              <MenuItem value="">Выберите модуль</MenuItem>
+              {employeeModules.map((unit) => <MenuItem key={unit.id} value={unit.id}>{unit.name}</MenuItem>)}
+            </TextField>
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2 }}>
+          <Button onClick={() => setCreateOpen(false)}>Отмена</Button>
+          <Button startIcon={<AddIcon />} variant="contained" onClick={() => create.mutate()} disabled={!requestDraft.unit_id || create.isPending}>Создать заявку</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={exportOpen} onClose={() => setExportOpen(false)} fullWidth maxWidth="sm" className="export-dialog">
+        <DialogTitle>Настройки экспорта</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2.5} sx={{ pt: 0.5 }}>
+            <Stack spacing={0.5}>
+              <Stack direction="row" spacing={0.5} alignItems="center">
+                <Typography fontWeight={700}>Заявки и статусы</Typography>
+                <Tooltip title="В экспорт входят только утверждённые заявки: полностью, с изменениями или частично. Отклонённые и отменённые заявки не выгружаются.">
+                  <IconButton size="small" aria-label="Нюансы статусов экспорта"><InfoOutlinedIcon fontSize="small" /></IconButton>
+                </Tooltip>
+              </Stack>
+              <Typography variant="body2" color="text.secondary">Выберите один или несколько статусов. По умолчанию выгружаются все доступные для экспорта заявки.</Typography>
+              <FormGroup sx={{ mt: 0.5 }}>
+                {EXPORTABLE_REQUEST_STATUSES.map((status) => (
+                  <FormControlLabel
+                    key={status}
+                    control={<Checkbox checked={exportSettings.statuses.includes(status)} onChange={() => toggleExportStatus(status)} />}
+                    label={requestStatusLabels[status]}
+                  />
+                ))}
+              </FormGroup>
+            </Stack>
+
+            <Stack spacing={0.75}>
+              <Stack direction="row" spacing={0.5} alignItems="center">
+                <Typography fontWeight={700}>Модуль</Typography>
+                <Tooltip title="Оставьте «Все доступные модули», чтобы получить общий экспорт. При выборе модуля в файл попадут только его заявки.">
+                  <IconButton size="small" aria-label="Нюансы выбора модуля"><InfoOutlinedIcon fontSize="small" /></IconButton>
+                </Tooltip>
+              </Stack>
+              <TextField select label="Модуль" value={exportSettings.unit_id} onChange={(event) => setExportSettings((current) => ({ ...current, unit_id: event.target.value }))} fullWidth>
+                <MenuItem value="">Все доступные модули</MenuItem>
+                {allModules.map((unit) => <MenuItem key={unit.id} value={unit.id}>{unit.name}</MenuItem>)}
+              </TextField>
+            </Stack>
+
+            <Stack spacing={0.25}>
+              <Stack direction="row" spacing={0.5} alignItems="center">
+                <FormControlLabel
+                  sx={{ mr: 0 }}
+                  control={<Switch checked={exportSettings.include_files} onChange={(event) => setExportSettings((current) => ({ ...current, include_files: event.target.checked }))} />}
+                  label="Включить прикреплённые файлы"
+                />
+                <Tooltip title="С файлами выгружается ZIP-архив: Excel и папка вложений, разложенных по заявкам и строкам бюджета. Без файлов будет скачан только Excel.">
+                  <IconButton size="small" aria-label="Нюансы выгрузки файлов"><InfoOutlinedIcon fontSize="small" /></IconButton>
+                </Tooltip>
+              </Stack>
+              <Typography variant="body2" color="text.secondary">Доступ к вложениям проверяется теми же правами, что и доступ к заявкам.</Typography>
+            </Stack>
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2 }}>
+          <Button onClick={() => setExportOpen(false)}>Отмена</Button>
+          <Button variant="contained" startIcon={<FileDownloadIcon />} onClick={exportClosed} disabled={exportSettings.statuses.length === 0}>
+            Экспортировать
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Paper className="table-surface" elevation={0}>
         <Table size="small">
@@ -317,6 +423,7 @@ export default function RequestsPage({ user }: { user: User }) {
           <TableBody>
             {data.map((item) => {
               const canDelete = item.status === 'draft' && user.role === 'employee';
+              const canWithdraw = item.status === 'on_review' && user.role === 'employee';
               const unitName = units.find((unit) => unit.id === item.unit_id)?.name || item.unit_id;
               return (
               <TableRow
@@ -334,21 +441,18 @@ export default function RequestsPage({ user }: { user: User }) {
                   <TableCell>{money(item.summary?.approved_sum ?? (item.status === 'cancelled' ? 0 : item.sum))}</TableCell>
                   <TableCell>{item.summary?.items_count || 0}</TableCell>
                   <TableCell align="right">
-                    {canDelete && (
-                      <Tooltip title="Удалить заявку">
-                        <IconButton
-                          size="small"
-                          color="error"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setDeleteTarget(item);
-                          }}
-                          aria-label="Удалить заявку"
-                        >
-                          <DeleteOutlineIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    )}
+                    <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                      {canWithdraw ? (
+                        <Button size="small" startIcon={<UndoIcon />} onClick={(event) => { event.stopPropagation(); withdrawRequest.mutate(item.id); }} disabled={withdrawRequest.isPending}>
+                          Отозвать
+                        </Button>
+                      ) : null}
+                      {canDelete ? (
+                        <Button size="small" startIcon={<DeleteOutlineIcon />} color="error" onClick={(event) => { event.stopPropagation(); setDeleteTarget(item); }}>
+                          Удалить
+                        </Button>
+                      ) : null}
+                    </Stack>
                   </TableCell>
                 </TableRow>
               );

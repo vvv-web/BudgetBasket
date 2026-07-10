@@ -7,7 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.database import create_engine_from_url, create_session_factory
-from app.repositories.json_repository import JsonRepository
 from app.repositories.sql_repository import SqlRepository
 from app.routers import router
 from app.seed import seed_data
@@ -27,18 +26,14 @@ from app.services import (
 def create_app() -> FastAPI:
     app = FastAPI(title="BudgetBasket API", version="0.1.0")
     settings = get_settings()
-    data_root = Path(os.getenv("BUDGET_DATA_ROOT", Path(__file__).resolve().parents[1] / "data"))
-    current_dir = Path(os.getenv("BUDGET_DATA_DIR", data_root / "current"))
     storage_root = Path(os.getenv("BUDGET_STORAGE_DIR", Path(__file__).resolve().parents[2] / "storage"))
     upload_dir = Path(os.getenv("BUDGET_UPLOAD_DIR", storage_root / "uploads"))
     export_dir = Path(os.getenv("BUDGET_EXPORT_DIR", storage_root / "exports"))
 
-    engine = None
-    if settings.use_database:
-        engine = create_engine_from_url(settings.database_url)
-        repo = SqlRepository(create_session_factory(engine))
-    else:
-        repo = JsonRepository(current_dir)
+    if not settings.database_url:
+        raise RuntimeError("DATABASE_URL is required; BudgetBasket uses PostgreSQL only")
+    engine = create_engine_from_url(settings.database_url)
+    repo = SqlRepository(create_session_factory(engine))
     seed_data(repo)
 
     permissions = PermissionService(repo)
@@ -54,7 +49,7 @@ def create_app() -> FastAPI:
     app.state.request_service = request_service
     app.state.budget_item_service = BudgetItemService(repo, permissions, request_service)
     app.state.file_service = FileService(repo, permissions, upload_dir, settings)
-    app.state.excel_service = ExcelService(repo, permissions, request_service, export_dir)
+    app.state.excel_service = ExcelService(repo, permissions, request_service, app.state.file_service, export_dir)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -66,8 +61,7 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     def startup() -> None:
-        if getattr(app.state.repo, "is_sql", False):
-            app.state.repo.check_connection()
+        app.state.repo.check_connection()
         attempts = 10 if settings.use_s3 else 1
         for attempt in range(attempts):
             try:
@@ -80,8 +74,7 @@ def create_app() -> FastAPI:
 
     @app.on_event("shutdown")
     def shutdown() -> None:
-        if app.state.db_engine is not None:
-            app.state.db_engine.dispose()
+        app.state.db_engine.dispose()
 
     @app.get("/health")
     def health() -> dict:
@@ -89,8 +82,6 @@ def create_app() -> FastAPI:
 
     @app.get("/health/db")
     def db_health() -> dict:
-        if not getattr(app.state.repo, "is_sql", False):
-            return {"status": "ok", "storage": "json"}
         app.state.repo.check_connection()
         return {"status": "ok", "storage": "postgresql"}
 

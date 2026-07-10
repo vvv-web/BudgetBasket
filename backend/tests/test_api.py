@@ -1,15 +1,17 @@
 import os
 
+import pytest
 from fastapi.testclient import TestClient
 
-from app.seed import DDS_LICENSE_ID, INVEST_PLATFORM_ID, MODULE_ALPHA_ID, REQUEST_ID
+from app.seed import DEPARTMENT_ID, DDS_LICENSE_ID, ECONOMIST_ID, EMPLOYEE_ID, INVEST_PLATFORM_ID, MODULE_ALPHA_ID, MODULE_BETA_ID, REQUEST_ID
 
 
 def make_client(tmp_path):
-    data_root = tmp_path / "data"
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("TEST_DATABASE_URL is required for PostgreSQL integration tests")
     storage_root = tmp_path / "storage"
-    os.environ["BUDGET_DATA_ROOT"] = str(data_root)
-    os.environ["BUDGET_DATA_DIR"] = str(data_root / "current")
+    os.environ["DATABASE_URL"] = database_url
     os.environ["BUDGET_STORAGE_DIR"] = str(storage_root)
     os.environ["BUDGET_UPLOAD_DIR"] = str(storage_root / "uploads")
     os.environ["BUDGET_EXPORT_DIR"] = str(storage_root / "exports")
@@ -250,6 +252,55 @@ def test_economist_sees_only_requests_sent_for_review(tmp_path):
     assert client.get(f"/requests/{submitted_request['id']}", headers=economist).status_code == 200
 
 
+def test_request_counterparty_contact_is_visible_to_employee_and_economist(tmp_path):
+    client = make_client(tmp_path)
+    economist = auth(client, "economist", "economist")
+    employee = auth(client, "employee", "employee")
+
+    employee_contact = client.get(f"/requests/{REQUEST_ID}/counterparty-contact", headers=economist)
+    economist_contact = client.get(f"/requests/{REQUEST_ID}/counterparty-contact", headers=employee)
+
+    assert employee_contact.status_code == 200
+    assert employee_contact.json()["user_id"] == EMPLOYEE_ID
+    assert economist_contact.status_code == 200
+    assert economist_contact.json()["user_id"] == ECONOMIST_ID
+
+
+def test_dashboard_returns_budget_distribution_only_for_allowed_units(tmp_path):
+    client = make_client(tmp_path)
+    admin = auth(client, "admin", "admin")
+    economist = auth(client, "economist", "economist")
+    employee = auth(client, "employee", "employee")
+
+    draft = client.post("/requests", json={"unit_id": MODULE_ALPHA_ID}, headers=employee).json()
+    assert client.post(
+        f"/requests/{draft['id']}/dds-items",
+        json={"dds_id": DDS_LICENSE_ID, "sum_plan": 1000},
+        headers=employee,
+    ).status_code == 200
+    cancelled = client.post("/requests", json={"unit_id": MODULE_ALPHA_ID}, headers=employee).json()
+    assert client.post(
+        f"/requests/{cancelled['id']}/dds-items",
+        json={"dds_id": DDS_LICENSE_ID, "sum_plan": 2000},
+        headers=employee,
+    ).status_code == 200
+    assert client.post(f"/requests/{cancelled['id']}/submit", headers=employee).status_code == 200
+    assert client.post(f"/requests/{cancelled['id']}/cancel", headers=employee).status_code == 200
+
+    admin_dashboard = client.get("/dashboard", headers=admin)
+    economist_dashboard = client.get("/dashboard", headers=economist)
+    focused_dashboard = client.get("/dashboard", params={"unit_id": DEPARTMENT_ID}, headers=economist)
+    foreign_dashboard = client.get("/dashboard", params={"unit_id": MODULE_BETA_ID}, headers=economist)
+
+    assert admin_dashboard.status_code == 200
+    assert [unit["id"] for unit in admin_dashboard.json()["scope"]["available_units"]] == [DEPARTMENT_ID]
+    assert economist_dashboard.status_code == 200
+    assert [unit["id"] for unit in economist_dashboard.json()["scope"]["available_units"]] == [DEPARTMENT_ID]
+    assert economist_dashboard.json()["totals"]["planned"] == 470000
+    assert focused_dashboard.json()["totals"]["planned"] == 470000
+    assert foreign_dashboard.json()["totals"]["planned"] == 0
+
+
 def test_reopen_returns_request_to_review_for_economist_editing(tmp_path):
     client = make_client(tmp_path)
     economist = auth(client, "economist", "economist")
@@ -453,15 +504,90 @@ def test_catalog_scoped_by_module_and_excel_import_export(tmp_path):
 
     book = load_exported(BytesIO(exported.content))
     assert book.sheetnames[0] == "Состав"
-    assert book["Состав"].max_row >= 3
-    headers_row = [cell.value for cell in book["Состав"][1]]
-    assert "Статья / проект" in headers_row
-    assert "Категория" in headers_row
-    batch = client.get("/requests/export/closed", headers=admin)
-    assert batch.status_code == 200
-    batch_book = load_exported(BytesIO(batch.content))
-    assert batch_book.sheetnames[0] == "Состав"
-    assert batch_book["Состав"].max_row >= 3
+
+
+def test_export_includes_approved_with_changes_request(tmp_path):
+    client = make_client(tmp_path)
+    admin = auth(client, "admin", "admin")
+    economist = auth(client, "economist", "economist")
+    dds_item = client.get(f"/requests/{REQUEST_ID}/dds-items", headers=economist).json()[0]
+    invest_item = client.get(f"/requests/{REQUEST_ID}/invest-items", headers=economist).json()[0]
+
+    assert client.patch(f"/dds-items/{dds_item['id']}", json={"status": "approved"}, headers=economist).status_code == 200
+    assert client.patch(
+        f"/invest-items/{invest_item['id']}",
+        json={"status": "approved_with_changes", "sum_fact": 300000},
+        headers=economist,
+    ).status_code == 200
+    finalized = client.post(f"/requests/{REQUEST_ID}/finalize", headers=economist)
+    assert finalized.json()["status"] == "approved_with_changes"
+
+    exported = client.get("/requests/export/closed", headers=admin)
+    assert exported.status_code == 200
+
+
+def test_export_excludes_rejected_and_cancelled_requests(tmp_path):
+    client = make_client(tmp_path)
+    admin = auth(client, "admin", "admin")
+    economist = auth(client, "economist", "economist")
+    employee = auth(client, "employee", "employee")
+    dds_item = client.get(f"/requests/{REQUEST_ID}/dds-items", headers=economist).json()[0]
+    invest_item = client.get(f"/requests/{REQUEST_ID}/invest-items", headers=economist).json()[0]
+
+    assert client.patch(f"/dds-items/{dds_item['id']}", json={"status": "rejected", "sum_fact": 0}, headers=economist).status_code == 200
+    assert client.patch(f"/invest-items/{invest_item['id']}", json={"status": "rejected", "sum_fact": 0}, headers=economist).status_code == 200
+    assert client.post(f"/requests/{REQUEST_ID}/finalize", headers=economist).json()["status"] == "rejected"
+
+    cancelled = client.post("/requests", json={"unit_id": MODULE_ALPHA_ID}, headers=employee).json()
+    assert client.post(
+        f"/requests/{cancelled['id']}/dds-items",
+        json={"dds_id": DDS_LICENSE_ID, "sum_plan": 1000},
+        headers=employee,
+    ).status_code == 200
+    assert client.post(f"/requests/{cancelled['id']}/submit", headers=employee).status_code == 200
+    assert client.post(f"/requests/{cancelled['id']}/cancel", headers=employee).status_code == 200
+
+    assert client.get("/requests/export/closed", headers=admin).status_code == 404
+
+
+def test_export_with_files_returns_zip_archive(tmp_path):
+    from io import BytesIO
+    from zipfile import ZipFile
+
+    from openpyxl import load_workbook
+
+    client = make_client(tmp_path)
+    admin = auth(client, "admin", "admin")
+    economist = auth(client, "economist", "economist")
+    employee = auth(client, "employee", "employee")
+    budget_request = client.post("/requests", json={"unit_id": MODULE_ALPHA_ID}, headers=employee).json()
+    item = client.post(
+        f"/requests/{budget_request['id']}/dds-items",
+        json={"dds_id": DDS_LICENSE_ID, "sum_plan": 1000},
+        headers=employee,
+    ).json()
+    assert client.post(
+        f"/dds-items/{item['id']}/files",
+        headers=employee,
+        files={"file": ("justification.pdf", b"attached budget file", "application/pdf")},
+    ).status_code == 200
+    assert client.post(f"/requests/{budget_request['id']}/submit", headers=employee).status_code == 200
+    assert client.post(f"/requests/{budget_request['id']}/approve-all-items", headers=economist).status_code == 200
+
+    exported = client.get("/requests/export/closed", params={"include_files": True}, headers=admin)
+    assert exported.status_code == 200
+    assert exported.headers["content-type"].startswith("application/zip")
+    with ZipFile(BytesIO(exported.content)) as archive:
+        assert "Утверждение_бюджета.xlsx" in archive.namelist()
+        attachment = next(name for name in archive.namelist() if name.endswith("justification.pdf"))
+        assert attachment.startswith("Приложения/Модуль клиентского кабинета/Лицензии и подписки/")
+        assert archive.read(attachment) == b"attached budget file"
+        workbook = load_workbook(BytesIO(archive.read("Утверждение_бюджета.xlsx")))
+        assert workbook.sheetnames == ["Состав"]
+        sheet = workbook["Состав"]
+        assert sheet.cell(2, 12).hyperlink.target == attachment
+        assert sheet.cell(1, 1).value == "Подразделение"
+        assert sheet.auto_filter.ref == f"A1:F{sheet.max_row}"
 
 
 def test_catalog_duplicate_rows_are_rejected(tmp_path):
@@ -512,3 +638,43 @@ def test_catalog_duplicate_rows_are_rejected(tmp_path):
             headers=admin,
         )
         assert duplicate_item.status_code == 400
+
+
+def test_catalog_article_must_use_category_from_same_department(tmp_path):
+    client = make_client(tmp_path)
+    admin = auth(client, "admin", "admin")
+    other_department = client.post(
+        "/units",
+        json={"parent_id": None, "name": "Other department", "type": "department", "is_active": True},
+        headers=admin,
+    ).json()
+    category = client.post(
+        "/catalog/dds",
+        json={"parent_id": None, "unit_id": other_department["id"], "name": "Other category", "is_active": True},
+        headers=admin,
+    ).json()
+
+    denied = client.post(
+        "/catalog/dds",
+        json={"parent_id": category["id"], "unit_id": DEPARTMENT_ID, "name": "Foreign article", "is_active": True},
+        headers=admin,
+    )
+    assert denied.status_code == 400
+
+
+def test_used_catalog_records_cannot_be_moved_or_deleted(tmp_path):
+    client = make_client(tmp_path)
+    admin = auth(client, "admin", "admin")
+    new_category = client.post(
+        "/catalog/dds",
+        json={"parent_id": None, "unit_id": DEPARTMENT_ID, "name": "New category", "is_active": True},
+        headers=admin,
+    ).json()
+
+    moved = client.patch(
+        f"/catalog/dds/{DDS_LICENSE_ID}",
+        json={"parent_id": new_category["id"]},
+        headers=admin,
+    )
+    assert moved.status_code == 400
+    assert client.delete("/catalog/dds/20000000-0000-0000-0000-000000000001", headers=admin).status_code == 400

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from app.repositories.base import Repository
-from app.repositories.json_repository import JsonRepository
 from app.security import hash_password
 
 ADMIN_ID = "00000000-0000-0000-0000-000000000001"
@@ -16,65 +15,6 @@ INVEST_DEV_ID = "30000000-0000-0000-0000-000000000010"
 INVEST_PLATFORM_ID = "30000000-0000-0000-0000-000000000001"
 INVEST_INFRA_ID = "30000000-0000-0000-0000-000000000002"
 REQUEST_ID = "40000000-0000-0000-0000-000000000001"
-
-REQUEST_STATUS_MAP = {
-    "submitted": "on_review",
-    "in_review": "on_review",
-    "fixed": "approved",
-    "unfrozen": "draft",
-}
-
-ITEM_STATUS_MAP = {
-    "in_review": "on_review",
-    "accepted": "approved",
-    "accepted_adjusted": "approved_with_changes",
-}
-
-
-def _migrate_statuses(repo: JsonRepository) -> None:
-    requests = repo.load_all("requests")
-    changed = False
-    for item in requests:
-        old = item.get("status")
-        if old in REQUEST_STATUS_MAP:
-            item["status"] = REQUEST_STATUS_MAP[old]
-            changed = True
-        item.pop("budget_year", None)
-    if changed:
-        repo.save_all("requests", requests)
-
-    for collection in ("dds_items", "invest_items"):
-        items = repo.load_all(collection)
-        touched = False
-        for item in items:
-            old = item.get("status")
-            if old in ITEM_STATUS_MAP:
-                item["status"] = ITEM_STATUS_MAP[old]
-                touched = True
-            catalog = "dds_catalog" if collection == "dds_items" else "invests_catalog"
-            article_field = "dds_id" if collection == "dds_items" else "invest_id"
-            article_id = item.get(article_field)
-            if article_id and not item.get("category_id"):
-                article = repo.get_by_id(catalog, article_id)
-                if article and article.get("parent_id"):
-                    item["category_id"] = article["parent_id"]
-                    touched = True
-        if touched:
-            repo.save_all(collection, items)
-
-    users = repo.load_all("users")
-    if any("is_active" in user for user in users):
-        for user in users:
-            user.pop("is_active", None)
-        repo.save_all("users", users)
-
-    for collection in ("dds_catalog", "invests_catalog"):
-        items = repo.load_all(collection)
-        if any("code" in item for item in items):
-            for item in items:
-                item.pop("code", None)
-            repo.save_all(collection, items)
-
 
 def seed_data(repo: Repository) -> None:
     collections = [
@@ -96,9 +36,6 @@ def seed_data(repo: Repository) -> None:
     ]
     for collection in collections:
         repo.load_all(collection)
-
-    if not getattr(repo, "is_sql", False):
-        _migrate_statuses(repo)
 
     invests = repo.load_all("invests_catalog")
     if invests and not any(item.get("id") == INVEST_DEV_ID for item in invests):
