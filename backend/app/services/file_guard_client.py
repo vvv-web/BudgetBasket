@@ -68,13 +68,17 @@ class FileGuardClient:
 
 
 async def require_valid_file(client: FileGuardClient, upload: UploadFile) -> FileValidationResult:
+    file_name = upload.filename or "файл без имени"
     try:
         result = await client.validate(upload)
     except FileGuardUnavailableError as exc:
         raise HTTPException(
             status_code=503,
-            detail="Проверка файлов временно недоступна. Повторите попытку позже.",
+            detail=f"Файл «{file_name}»: проверка файлов временно недоступна. Повторите попытку позже.",
         ) from exc
     if not result.valid:
-        raise HTTPException(status_code=400, detail=result.message or "Файл не прошёл проверку безопасности.")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Файл «{file_name}»: {result.message or 'не прошёл проверку безопасности.'}",
+        )
     return result

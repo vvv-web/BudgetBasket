@@ -1,10 +1,10 @@
-import os
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.seed import DEPARTMENT_ID, DDS_LICENSE_ID, ECONOMIST_ID, EMPLOYEE_ID, INVEST_PLATFORM_ID, MODULE_ALPHA_ID, MODULE_BETA_ID, REQUEST_ID
+from tests.in_memory_repository import InMemoryRepository
 
 
 class AllowingFileGuard:
@@ -55,17 +55,13 @@ def use_file_guard(client: TestClient, file_guard) -> None:
 
 
 def make_client(tmp_path):
-    database_url = os.getenv("TEST_DATABASE_URL")
-    if not database_url:
-        pytest.skip("TEST_DATABASE_URL is required for PostgreSQL integration tests")
     storage_root = tmp_path / "storage"
-    os.environ["DATABASE_URL"] = database_url
-    os.environ["BUDGET_STORAGE_DIR"] = str(storage_root)
-    os.environ["BUDGET_UPLOAD_DIR"] = str(storage_root / "uploads")
-    os.environ["BUDGET_EXPORT_DIR"] = str(storage_root / "exports")
-    from app.main import create_app
+    from app.config import Settings
+    from app.factory import create_app
 
-    app = create_app()
+    settings = Settings(database_url=None, s3_endpoint=None)
+    app = create_app(repository=InMemoryRepository(), settings=settings)
+    app.state.file_service.object_storage.root = storage_root / "uploads"
     file_guard = AllowingFileGuard()
     app.state.file_guard_client = file_guard
     app.state.file_service.file_guard = file_guard
@@ -287,7 +283,7 @@ def test_rejected_file_is_not_saved_or_registered(tmp_path):
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "Тип содержимого файла не соответствует его расширению."
+    assert response.json()["detail"] == "Файл «fake.pdf»: Тип содержимого файла не соответствует его расширению."
     assert len(client.app.state.repo.load_all("files")) == before_files
     assert len(client.app.state.repo.load_all("storage_objects")) == before_objects
 
@@ -311,7 +307,7 @@ def test_unavailable_file_guard_fails_closed(tmp_path):
     )
 
     assert response.status_code == 503
-    assert response.json()["detail"] == "Проверка файлов временно недоступна. Повторите попытку позже."
+    assert response.json()["detail"] == "Файл «offer.pdf»: проверка файлов временно недоступна. Повторите попытку позже."
     assert len(client.app.state.repo.load_all("files")) == before_files
 
 

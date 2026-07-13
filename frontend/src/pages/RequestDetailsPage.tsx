@@ -5,6 +5,7 @@ import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import LockOpenOutlinedIcon from '@mui/icons-material/LockOpenOutlined';
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
+import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined';
 import SendIcon from '@mui/icons-material/Send';
 import UndoIcon from '@mui/icons-material/Undo';
@@ -123,7 +124,6 @@ function ItemFilesCell({
   editing,
   stagedFiles,
   pendingDeletedFileIds,
-  onStageFile,
   onRemoveStagedFile,
   onStageDelete,
   onRestoreDelete,
@@ -134,7 +134,6 @@ function ItemFilesCell({
   editing: boolean;
   stagedFiles: File[];
   pendingDeletedFileIds: number[];
-  onStageFile: (file: File) => void;
   onRemoveStagedFile: (file: File) => void;
   onStageDelete: (file: FileAttachment) => void;
   onRestoreDelete: (fileId: number) => void;
@@ -178,7 +177,7 @@ function ItemFilesCell({
                 aria-label="Удалить файл"
                 sx={{ color: 'text.secondary', flexShrink: 0 }}
               >
-                <DeleteOutlineIcon fontSize="small" />
+              <CloseIcon fontSize="small" />
               </IconButton>
             </Tooltip>
           )}
@@ -208,7 +207,6 @@ function ItemFilesCell({
           sx={{ maxWidth: '100%', '& .MuiChip-label': { overflow: 'hidden', textOverflow: 'ellipsis' } }}
         />
       ))}
-      {editing && <FileAttachAction disabled={disabled} onUpload={onStageFile} />}
     </Stack>
   );
 }
@@ -544,17 +542,10 @@ function ItemsTable({
   return (
     <>
       <Stack spacing={1}>
-        <Typography variant="h6">{title}</Typography>
-        <Typography color="text.secondary">
-          {canEconomist
-            ? 'Проверьте строки, укажите статус, утверждённую сумму и комментарий.'
-            : employeeCanEdit
-              ? 'Нажмите «Редактировать все», чтобы изменить статьи, планы и файлы. Изменения применятся только после общего сохранения.'
-              : 'Строки заявки показаны в режиме просмотра. Редактирование и работа с файлами доступны только сотруднику в черновике.'}
-        </Typography>
-        {employeeCanEdit && (
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-            {isEmployeeEditing ? (
+        <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap" useFlexGap>
+          <Typography variant="h6">{title}</Typography>
+          <Stack direction="row" spacing={0.5} alignItems="center">
+            {employeeCanEdit && (isEmployeeEditing ? (
               <>
                 <Button
                   size="small"
@@ -563,33 +554,47 @@ function ItemsTable({
                   onClick={() => saveEmployeeChanges.mutate()}
                   disabled={saveEmployeeChanges.isPending}
                 >
-                  Сохранить все изменения
+                  Сохранить
                 </Button>
-                <Button
-                  size="small"
-                  variant="outlined"
-                  startIcon={<CloseIcon />}
-                  onClick={cancelEmployeeEdit}
-                  disabled={saveEmployeeChanges.isPending}
-                >
-                  Отменить
-                </Button>
+                <Tooltip title="Отменить редактирование">
+                  <span>
+                    <IconButton
+                      size="small"
+                      onClick={cancelEmployeeEdit}
+                      disabled={saveEmployeeChanges.isPending}
+                      aria-label="Отменить редактирование"
+                    >
+                      <CloseIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
               </>
             ) : (
               <Button size="small" variant="outlined" startIcon={<EditOutlinedIcon />} onClick={() => setIsEmployeeEditing(true)}>
-                Редактировать все строки
+                Изменить
               </Button>
-            )}
+            ))}
+            <Tooltip title="Сбросить ширину колонок">
+              <IconButton
+                size="small"
+                onClick={() => setColumnWidths(DEFAULT_ITEM_TABLE_COLUMN_WIDTHS)}
+                aria-label="Сбросить ширину колонок"
+              >
+                <RestartAltIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
           </Stack>
-        )}
-        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-          <Typography variant="caption" color="text.secondary">
-            Перетаскивайте границы заголовков, чтобы настроить ширину колонок.
-          </Typography>
-          <Button size="small" variant="text" onClick={() => setColumnWidths(DEFAULT_ITEM_TABLE_COLUMN_WIDTHS)}>
-            Сбросить ширину
-          </Button>
         </Stack>
+        <Typography color="text.secondary">
+          {canEconomist
+            ? 'Проверьте строки, укажите статус, утверждённую сумму и комментарий.'
+            : employeeCanEdit
+              ? 'Нажмите «Изменить», чтобы изменить статьи, планы и файлы. Изменения применятся только после общего сохранения.'
+              : 'Строки заявки показаны в режиме просмотра. Редактирование и работа с файлами доступны только сотруднику в черновике.'}
+        </Typography>
+        <Typography variant="caption" color="text.secondary">
+          Перетаскивайте границы заголовков, чтобы настроить ширину колонок.
+        </Typography>
       </Stack>
       {employeeCanEdit && <AddItemForm kind={kind} requestId={request.id} catalog={catalog} disabled={disabledForEmployee || isEmployeeEditing} />}
       <TableContainer className="request-items-table">
@@ -606,7 +611,7 @@ function ItemsTable({
             <TableCell sx={headerCell('approved')}>Утверждено{resizeHandle('approved')}</TableCell>
             <TableCell sx={headerCell('comment')}>Комментарий{resizeHandle('comment')}</TableCell>
             <TableCell sx={headerCell('files')}>Файл{resizeHandle('files')}</TableCell>
-            <TableCell sx={headerCell('actions')} align="right">Действия</TableCell>
+            <TableCell sx={headerCell('actions')} align="center">Действия</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -710,7 +715,6 @@ function ItemsTable({
                     editing={isEmployeeEditing}
                     stagedFiles={stagedFiles}
                     pendingDeletedFileIds={pendingDeletedFileIds}
-                    onStageFile={(file) => stageFile(item.id, file)}
                     onRemoveStagedFile={(file) =>
                       setStagedFilesByItem((current) => ({
                         ...current,
@@ -732,8 +736,14 @@ function ItemsTable({
                     disabled={saveEmployeeChanges.isPending}
                   />
                 </TableCell>
-                <TableCell align="right" sx={{ px: 1, py: 1 }}>
-                  <Stack direction="row" spacing={0.5} justifyContent="flex-end" alignItems="center">
+                <TableCell align="center" sx={{ px: 1, py: 1 }}>
+                  <Stack direction="row" spacing={0.5} justifyContent="center" alignItems="center">
+                    {isEmployeeEditing && (
+                      <FileAttachAction
+                        disabled={saveEmployeeChanges.isPending}
+                        onUpload={(file) => stageFile(item.id, file)}
+                      />
+                    )}
                     {canEconomist ? (
                       <Tooltip title="Сохранить изменения строки">
                         <IconButton
