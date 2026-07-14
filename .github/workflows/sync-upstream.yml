@@ -1,0 +1,37 @@
+# Auto-sync fork main from alexonderia/BudgetBasket.
+# Canon: GitHub Docs — Syncing a fork + Actions on.schedule (must live on default branch).
+# Local pattern: vvv-web/agent + vvv-web/KubeDiagrams sync-upstream.yml
+name: Sync fork from upstream
+
+on:
+  schedule:
+    # Daily 05:00 UTC (BudgetBasket — активный МБО; чаще, чем «раз в 4 дня» у редких форков)
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-budgetbasket
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge upstream (alexonderia/BudgetBasket)
+        run: |
+          set -eux
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/alexonderia/BudgetBasket.git
+          git fetch upstream main
+          git checkout main
+          git merge FETCH_HEAD --no-edit -m "chore: merge upstream alexonderia/BudgetBasket ($(date -u +%Y-%m-%d))"
+          git push origin main
