@@ -8,12 +8,33 @@ class PermissionService:
     def __init__(self, repo: Repository):
         self.repo = repo
 
+    def _child_modules(self, unit_id: str) -> set[str]:
+        units = {item["id"]: item for item in self.repo.load_all("units")}
+        child_ids = {item["id"] for item in self.repo.load_all("units") if item.get("parent_id") == unit_id}
+        result = set(child_ids)
+        stack = list(child_ids)
+        while stack:
+            current_id = stack.pop()
+            for item in units.values():
+                if item.get("parent_id") == current_id and item["id"] not in result:
+                    result.add(item["id"])
+                    stack.append(item["id"])
+        return {item_id for item_id in result if units.get(item_id, {}).get("parent_id")}
+
     def employee_module_ids(self, user_id: str) -> set[str]:
-        return {
+        assigned_units = {
             item["unit_id"]
             for item in self.repo.load_all("units_responsibles")
             if item.get("user_id") == user_id and item.get("is_active")
         }
+        module_ids = set(assigned_units)
+        for unit_id in assigned_units:
+            unit = self.repo.get_by_id("units", unit_id)
+            if not unit:
+                continue
+            if not unit.get("parent_id"):
+                module_ids.update(self._child_modules(unit_id))
+        return module_ids
 
     def economist_module_ids(self, user_id: str) -> set[str]:
         assigned_units = {

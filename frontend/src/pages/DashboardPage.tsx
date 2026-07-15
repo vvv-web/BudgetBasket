@@ -4,6 +4,7 @@ import FactCheckIcon from '@mui/icons-material/FactCheck';
 import PaymentsOutlinedIcon from '@mui/icons-material/PaymentsOutlined';
 import PieChartOutlineIcon from '@mui/icons-material/PieChartOutline';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
@@ -36,10 +37,12 @@ type DashboardData = {
   totals: {
     planned: number;
     approved: number;
+    frozen: number;
     remaining: number;
     requests_count: number;
     approved_requests_count: number;
     review_requests_count: number;
+    frozen_requests_count: number;
   };
   by_unit: Breakdown[];
   by_category: Breakdown[];
@@ -262,10 +265,11 @@ export default function DashboardPage({ user }: { user: User }) {
       </Card>
 
       <Grid container spacing={2}>
-        <Grid size={{ xs: 12, sm: 6, lg: 3 }}><Metric title="Сумма расчета" value={money(data.totals.planned)} hint="Модуль сформировал" icon={<PaymentsOutlinedIcon fontSize="small" />} /></Grid>
-        <Grid size={{ xs: 12, sm: 6, lg: 3 }}><Metric title="Утверждено экономистом" value={money(data.totals.approved)} hint={`${approvalRate}% от расчета`} icon={<AssignmentTurnedInIcon fontSize="small" />} tone="green" /></Grid>
-        <Grid size={{ xs: 12, sm: 6, lg: 3 }}><Metric title="На согласовании" value={data.totals.review_requests_count} hint={`из ${data.totals.requests_count} заявок`} icon={<FactCheckIcon fontSize="small" />} tone="amber" /></Grid>
-        <Grid size={{ xs: 12, sm: 6, lg: 3 }}><Metric title="Корректировка" value={correction >= 0 ? `+${money(correction)}` : money(correction)} hint={correctionLabel} icon={<TrendingUpIcon fontSize="small" />} tone="purple" /></Grid>
+        <Grid size={{ xs: 12, sm: 6, lg: 2.4 }}><Metric title="Сумма" value={money(data.totals.planned)} hint="Запланированная модулями" icon={<PaymentsOutlinedIcon fontSize="small" />} /></Grid>
+        <Grid size={{ xs: 12, sm: 6, lg: 2.4 }}><Metric title="Корректировка" value={correction >= 0 ? `+${money(correction)}` : money(correction)} hint={correctionLabel} icon={<TrendingUpIcon fontSize="small" />} tone="purple" /></Grid>
+        <Grid size={{ xs: 12, sm: 6, lg: 2.4 }}><Metric title="Утверждено" value={money(data.totals.approved)} hint={`${approvalRate}% от расчета`} icon={<AssignmentTurnedInIcon fontSize="small" />} tone="green" /></Grid>
+        <Grid size={{ xs: 12, sm: 6, lg: 2.4 }}><Metric title="Зафиксировано" value={money(data.totals.frozen)} hint={`${data.totals.frozen_requests_count} заявок зафиксировано`} icon={<LockOutlinedIcon fontSize="small" />} tone="amber" /></Grid>
+        <Grid size={{ xs: 12, sm: 6, lg: 2.4 }}><Metric title="Обработано" value={data.totals.approved_requests_count} hint={`заявок из ${data.totals.requests_count}`} icon={<FactCheckIcon fontSize="small" />} tone="amber" /></Grid>
       </Grid>
 
       <Grid container spacing={2.5}>

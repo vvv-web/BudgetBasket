@@ -4,6 +4,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import DownloadIcon from '@mui/icons-material/Download';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import CheckIcon from '@mui/icons-material/Check';
+import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import Alert from '@mui/material/Alert';
 import Autocomplete from '@mui/material/Autocomplete';
@@ -47,6 +48,12 @@ type ManualRow = {
   is_active: boolean;
 };
 
+type CategoryRow = {
+  id: string;
+  name: string;
+  is_active: boolean;
+};
+
 type CatalogDraft = {
   parent_id: string;
   unit_id: string;
@@ -54,11 +61,35 @@ type CatalogDraft = {
   is_active: boolean;
 };
 
+type ImportRow = {
+  row: number;
+  category: string | null;
+  name: string;
+  unit_id: string | null;
+  unit_name: string;
+  is_active: boolean;
+  action?: 'create' | 'update';
+};
+
+type ImportResult = {
+  preview: boolean;
+  created: number;
+  updated: number;
+  errors: string[];
+  rows: ImportRow[];
+};
+
 const emptyRow = (): ManualRow => ({
   id: crypto.randomUUID(),
   category: '',
   name: '',
   unit_id: '',
+  is_active: true,
+});
+
+const emptyCategoryRow = (): CategoryRow => ({
+  id: crypto.randomUUID(),
+  name: '',
   is_active: true,
 });
 
@@ -102,6 +133,7 @@ function CatalogManageDialog({
   onClose,
   kind,
   units,
+  items,
   categories,
   departmentId,
   onChanged,
@@ -110,6 +142,7 @@ function CatalogManageDialog({
   onClose: () => void;
   kind: CatalogKind;
   units: Unit[];
+  items: CatalogItem[];
   categories: CatalogItem[];
   departmentId: string;
   onChanged: () => void;
@@ -117,16 +150,30 @@ function CatalogManageDialog({
   const toast = useAppToast();
   const meta = catalogMeta[kind];
   const departments = units.filter((unit) => unit.type === 'department' || !unit.parent_id);
-  const categoryNames = useMemo(() => categories.map((item) => item.name).sort((a, b) => a.localeCompare(b, 'ru')), [categories]);
 
   const [rows, setRows] = useState<ManualRow[]>([emptyRow()]);
-  const [importResult, setImportResult] = useState<{ created: number; updated: number; errors: string[] } | null>(null);
-  const [createResult, setCreateResult] = useState<{ created: number; errors: string[] } | null>(null);
+  const [categoryRows, setCategoryRows] = useState<CategoryRow[]>([]);
+  const [importPreview, setImportPreview] = useState<ImportResult | null>(null);
+  const [createResult, setCreateResult] = useState<{ created: number; updated: number; errors: string[] } | null>(null);
+
+  const categoryNames = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const item of categories) {
+      const key = item.name.trim().toLowerCase();
+      if (key) names.set(key, item.name.trim());
+    }
+    for (const row of categoryRows) {
+      const key = row.name.trim().toLowerCase();
+      if (key) names.set(key, row.name.trim());
+    }
+    return [...names.values()].sort((a, b) => a.localeCompare(b, 'ru'));
+  }, [categories, categoryRows]);
 
   useEffect(() => {
     if (open) {
       setRows([{ ...emptyRow(), unit_id: departmentId }]);
-      setImportResult(null);
+      setCategoryRows([]);
+      setImportPreview(null);
       setCreateResult(null);
     }
   }, [open, kind, departmentId]);
@@ -135,14 +182,60 @@ function CatalogManageDialog({
     setRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)));
   };
 
+  const updateCategoryRow = (id: string, patch: Partial<CategoryRow>) => {
+    setCategoryRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  };
+
   const create = useMutation({
     mutationFn: async () => {
       const prepared = rows.filter((row) => row.name.trim() || row.category.trim());
-      if (!prepared.length) {
+      const preparedCategories = categoryRows.filter((row) => row.name.trim());
+      if (!prepared.length && !preparedCategories.length) {
         throw new Error('Заполните хотя бы одну строку');
       }
       const errors: string[] = [];
       let created = 0;
+      let updated = 0;
+      const catalogItems = [...items];
+      const categoryIdByName = new Map<string, string>();
+      const findRootCategory = (name: string) =>
+        catalogItems.find(
+          (item) =>
+            !item.parent_id &&
+            item.unit_id === departmentId &&
+            item.name.trim().toLowerCase() === name.trim().toLowerCase(),
+        );
+      const findLeaf = (name: string, parentId: string | null) =>
+        catalogItems.find(
+          (item) =>
+            item.parent_id === parentId &&
+            item.unit_id === departmentId &&
+            item.name.trim().toLowerCase() === name.trim().toLowerCase(),
+        );
+      for (const item of catalogItems) {
+        if (!item.parent_id && item.unit_id === departmentId) {
+          categoryIdByName.set(item.name.trim().toLowerCase(), item.id);
+        }
+      }
+      for (const categoryRow of preparedCategories) {
+        const name = categoryRow.name.trim();
+        if (!name) continue;
+        const key = name.toLowerCase();
+        const existing = findRootCategory(name);
+        if (existing) {
+          categoryIdByName.set(key, existing.id);
+          continue;
+        }
+        const createdCategory = await api.post<CatalogItem>(meta.path, {
+          parent_id: null,
+          unit_id: departmentId,
+          name,
+          is_active: categoryRow.is_active,
+        });
+        catalogItems.push(createdCategory.data);
+        categoryIdByName.set(key, createdCategory.data.id);
+        created += 1;
+      }
       for (const [index, row] of prepared.entries()) {
         const line = index + 1;
         if (!row.name.trim()) {
@@ -152,34 +245,44 @@ function CatalogManageDialog({
         try {
           let parentId: string | null = null;
           if (row.category.trim()) {
-            const existing = categories.find(
-              (item) => item.name.trim().toLowerCase() === row.category.trim().toLowerCase(),
-            );
-            if (existing) {
-              parentId = existing.id;
-            } else {
-              errors.push(`Строка ${line}: сначала создайте категорию «${row.category.trim()}» в выбранном подразделении`);
+            const categoryId = categoryIdByName.get(row.category.trim().toLowerCase());
+            if (!categoryId) {
+              errors.push(`Строка ${line}: сначала добавьте категорию «${row.category.trim()}» в отдельном блоке`);
               continue;
             }
+            parentId = categoryId;
           }
-          await api.post(meta.path, {
-            parent_id: parentId,
-            unit_id: departmentId,
-            name: row.name.trim(),
-            is_active: row.is_active,
-          });
-          created += 1;
+          const existing = findLeaf(row.name.trim(), parentId);
+          if (existing) {
+            await api.patch(`${meta.path}/${existing.id}`, {
+              parent_id: parentId,
+              unit_id: departmentId,
+              name: row.name.trim(),
+              is_active: row.is_active,
+            });
+            updated += 1;
+          } else {
+            const createdItem = await api.post<CatalogItem>(meta.path, {
+              parent_id: parentId,
+              unit_id: departmentId,
+              name: row.name.trim(),
+              is_active: row.is_active,
+            });
+            catalogItems.push(createdItem.data);
+            created += 1;
+          }
         } catch (error) {
           errors.push(`Строка ${line}: ${getErrorMessage(error, 'не удалось сохранить')}`);
         }
       }
-      return { created, errors };
+      return { created, updated, errors };
     },
     onSuccess: (result) => {
       setCreateResult(result);
-      if (result.created > 0) {
-        toast(`Создано записей: ${result.created}`, 'success');
+      if (result.created > 0 || result.updated > 0) {
+        toast(`Сохранено: создано ${result.created}, обновлено ${result.updated}`, 'success');
         setRows([emptyRow()]);
+        setCategoryRows([]);
         onChanged();
       }
       if (result.errors.length > 0) {
@@ -196,20 +299,46 @@ function CatalogManageDialog({
     downloadBlob(response.data, `nsi_${kind}_template.xlsx`);
   };
 
-  const importFile = useMutation({
+  const previewImport = useMutation({
     mutationFn: async (file: File) => {
       const body = new FormData();
       body.append('file', file);
-      return (await api.post<{ created: number; updated: number; errors: string[] }>(`/catalog/${kind}/import`, body)).data;
+      return (await api.post<ImportResult>(`/catalog/${kind}/import`, body, { params: { preview: true } })).data;
     },
     onSuccess: (result) => {
-      setImportResult(result);
-      onChanged();
+      const existingCategoryKeys = new Set(categories.map((item) => item.name.trim().toLowerCase()));
+      const importedCategoryNames = new Map<string, string>();
+      for (const row of result.rows) {
+        const categoryName = row.category?.trim();
+        if (!categoryName) continue;
+        const key = categoryName.toLowerCase();
+        if (existingCategoryKeys.has(key)) continue;
+        if (!importedCategoryNames.has(key)) {
+          importedCategoryNames.set(key, categoryName);
+        }
+      }
+      setCategoryRows(
+        [...importedCategoryNames.values()].map((name) => ({
+          id: crypto.randomUUID(),
+          name,
+          is_active: true,
+        })),
+      );
+      const importedRows = result.rows.map((row) => ({
+        id: crypto.randomUUID(),
+        category: row.category || '',
+        name: row.name,
+        unit_id: row.unit_id || departmentId,
+        is_active: row.is_active,
+      }));
+      setImportPreview(result);
+      setRows(importedRows.length ? importedRows : [{ ...emptyRow(), unit_id: departmentId }]);
+      setCreateResult(null);
       toast(
         result.errors.length
-          ? `Импорт завершён с ошибками: создано ${result.created}, обновлено ${result.updated}`
-          : `Импортировано: создано ${result.created}, обновлено ${result.updated}`,
-        result.errors.length ? 'warning' : 'success',
+          ? 'Импорт загружен с ошибками. Проверьте строки ниже и исправьте данные.'
+          : 'Импорт загружен. Проверьте строки ниже и сохраните их.',
+        result.errors.length ? 'warning' : 'info',
       );
     },
     onError: (error) => {
@@ -218,7 +347,8 @@ function CatalogManageDialog({
   });
 
   const handleClose = () => {
-    setImportResult(null);
+    setImportPreview(null);
+    setRows([{ ...emptyRow(), unit_id: departmentId }]);
     setCreateResult(null);
     onClose();
   };
@@ -238,15 +368,18 @@ function CatalogManageDialog({
           <Button startIcon={<DownloadIcon />} variant="outlined" onClick={downloadTemplate}>
             Скачать шаблон
           </Button>
-          <Button component="label" startIcon={<UploadFileIcon />} variant="contained" disabled={importFile.isPending}>
-            Загрузить Excel
+          <Button component="label" startIcon={<UploadFileIcon />} variant="contained" disabled={previewImport.isPending}>
+            Импорт
             <input
               hidden
               type="file"
               accept=".xlsx"
               onChange={(event) => {
                 const file = event.target.files?.[0];
-                if (file) importFile.mutate(file);
+                if (file) {
+                  setImportPreview(null);
+                  previewImport.mutate(file);
+                }
                 event.target.value = '';
               }}
             />
@@ -258,19 +391,84 @@ function CatalogManageDialog({
       </DialogTitle>
       <DialogContent dividers>
         <Stack spacing={3}>
-          {importResult && (
-            <Alert severity={importResult.errors.length ? 'warning' : 'success'}>
-              Импортировано: создано {importResult.created}, обновлено {importResult.updated}
-              {importResult.errors.length > 0 && <BoxList items={importResult.errors.slice(0, 5)} />}
+          {importPreview && (
+            <Alert severity={importPreview.errors.length ? 'warning' : 'info'}>
+              Импорт завершён: новые категории вынесены отдельно, а в таблицу ниже подставлено {importPreview.rows.length} строк.
+              {importPreview.errors.length > 0 && <BoxList items={importPreview.errors.slice(0, 8)} />}
             </Alert>
           )}
 
+          {categoryRows.length > 0 && (
+            <Box>
+              <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 0.5 }}>
+                Новые категории
+              </Typography>
+              <Typography color="text.secondary" variant="body2" sx={{ mb: 1.5 }}>
+                Сначала сохраните категории здесь, а затем проверьте строки ниже.
+              </Typography>
+              <TableContainer component={Paper} variant="outlined" className="catalog-manual-table" sx={{ borderRadius: '8px', overflow: 'auto' }}>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow sx={{ bgcolor: '#F8FAFC' }}>
+                      <TableCell sx={{ fontWeight: 700, minWidth: 260 }}>Категория</TableCell>
+                      <TableCell sx={{ fontWeight: 700, width: 120 }}>Активен</TableCell>
+                      <TableCell sx={{ width: 56 }} />
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {categoryRows.map((row) => (
+                      <TableRow key={row.id} hover>
+                        <TableCell>
+                          <TextField
+                            size="small"
+                            value={row.name}
+                            onChange={(event) => updateCategoryRow(row.id, { name: event.target.value })}
+                            placeholder="Название категории"
+                            fullWidth
+                            sx={cellFieldSx}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <TextField
+                            select
+                            size="small"
+                            value={row.is_active ? 'да' : 'нет'}
+                            onChange={(event) => updateCategoryRow(row.id, { is_active: event.target.value === 'да' })}
+                            fullWidth
+                            sx={cellFieldSx}
+                          >
+                            <MenuItem value="да">да</MenuItem>
+                            <MenuItem value="нет">нет</MenuItem>
+                          </TextField>
+                        </TableCell>
+                        <TableCell align="center">
+                          <IconButton
+                            size="small"
+                            disabled={categoryRows.length === 1}
+                            onClick={() => setCategoryRows((prev) => prev.filter((item) => item.id !== row.id))}
+                          >
+                            <DeleteOutlineIcon fontSize="small" />
+                          </IconButton>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mt: 1.5 }}>
+                <Button startIcon={<AddIcon />} variant="outlined" onClick={() => setCategoryRows((prev) => [...prev, emptyCategoryRow()])}>
+                  Добавить категорию
+                </Button>
+              </Stack>
+            </Box>
+          )}
+
           <Box>
-            <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 0.5 }}>Создать вручную</Typography>
+            <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 0.5 }}>Статьи / подкатегории</Typography>
             <Typography color="text.secondary" variant="body2" sx={{ mb: 1.5 }}>
-              Таблица как в Excel: категория → название ({meta.leafLabel}). Строка без указанной категории считается самой категорией.
+              Таблица как в Excel: категория → название ({meta.leafLabel}). Строки из импорта попадают сюда, а новые категории указываются отдельно выше.
             </Typography>
-            <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: '8px', overflow: 'auto' }}>
+            <TableContainer component={Paper} variant="outlined" className="catalog-manual-table" sx={{ borderRadius: '8px', overflow: 'auto' }}>
               <Table size="small">
                 <TableHead>
                   <TableRow sx={{ bgcolor: '#F8FAFC' }}>
@@ -354,14 +552,6 @@ function CatalogManageDialog({
               <Button startIcon={<AddIcon />} variant="outlined" onClick={() => setRows((prev) => [...prev, emptyRow()])}>
                 Добавить строку
               </Button>
-              <Button
-                startIcon={<CheckIcon />}
-                variant="contained"
-                onClick={() => create.mutate()}
-                disabled={create.isPending || !rows.some((row) => row.name.trim())}
-              >
-                Сохранить строки
-              </Button>
             </Stack>
             {create.isError && (
               <Alert severity="error" sx={{ mt: 1.5 }}>
@@ -370,7 +560,7 @@ function CatalogManageDialog({
             )}
             {createResult && (
               <Alert severity={createResult.errors.length ? 'warning' : 'success'} sx={{ mt: 1.5 }}>
-                Создано записей: {createResult.created}
+                Создано: {createResult.created}, обновлено: {createResult.updated}
                 {createResult.errors.length > 0 && <BoxList items={createResult.errors.slice(0, 5)} />}
               </Alert>
             )}
@@ -378,7 +568,14 @@ function CatalogManageDialog({
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={handleClose}>Закрыть</Button>
+        <Button
+          startIcon={<SaveOutlinedIcon />}
+          variant="outlined"
+          onClick={() => create.mutate()}
+          disabled={create.isPending || (!rows.some((row) => row.name.trim()) && !categoryRows.some((row) => row.name.trim()))}
+        >
+          Сохранить строки
+        </Button>
       </DialogActions>
     </Dialog>
   );
@@ -646,6 +843,7 @@ function CatalogPanel({
         onClose={() => onDialogOpenChange(false)}
         kind={kind}
         units={units}
+        items={data}
         categories={rootCategories}
         departmentId={departmentId}
         onChanged={refresh}
@@ -682,7 +880,7 @@ export default function CatalogsPage() {
 
   return (
     <Stack spacing={3}>
-      <Paper className="surface-pad" sx={{ py: 0, px: 1.5 }}>
+      <Paper className="surface-pad" sx={{ py: { xs: 1, md: 0 }, px: 1.5 }}>
         <Stack direction={{ xs: 'column', md: 'row' }} alignItems={{ md: 'center' }} justifyContent="space-between" spacing={1.5}>
           <Tabs value={tab} onChange={(_, value: CatalogKind) => setTab(value)} sx={{ minHeight: 56 }}>
             <Tab value="dds" label="Статьи ДДС" />

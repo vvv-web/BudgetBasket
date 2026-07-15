@@ -86,14 +86,24 @@ class CatalogService:
             department_id = self.department_id_for_unit(unit_id)
 
         needle = (query or "").strip().lower()
+        items = self.repo.load_all(collection)
+        by_id = {item["id"]: item for item in items}
+        active_child_parent_ids = {
+            item["parent_id"]
+            for item in items
+            if item.get("parent_id")
+            and item.get("is_active", True)
+            and (not department_id or item.get("unit_id") == department_id)
+        }
         result = []
-        for item in self.repo.load_all(collection):
+        for item in items:
             if department_id and item.get("unit_id") != department_id:
                 continue
-            if active_only and not item.get("is_active", True):
+            if active_only and not item.get("is_active", True) and item.get("id") not in active_child_parent_ids:
                 continue
             if needle:
-                haystack = str(item.get("name", "")).lower()
+                parent = by_id.get(item.get("parent_id"))
+                haystack = f"{item.get('name', '')} {parent.get('name', '') if parent else ''}".lower()
                 if needle not in haystack:
                     continue
             result.append(item)

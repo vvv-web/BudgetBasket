@@ -108,6 +108,11 @@ def get_responsible(request: Request, unit_id: str, user: User):
     return request.app.state.unit_service.get_responsible(unit_id)
 
 
+@router.delete("/units/{unit_id}/responsible")
+def clear_responsible(request: Request, unit_id: str, user: User):
+    return request.app.state.unit_service.clear_responsible(user, unit_id)
+
+
 @router.get("/economist-assignments")
 def list_assignments(request: Request, user: User):
     return request.app.state.unit_service.list_assignments(user)
@@ -201,9 +206,9 @@ def catalog_import_template(request: Request, kind: str, user: User):
 
 
 @router.post("/catalog/{kind}/import")
-async def catalog_import(request: Request, kind: str, user: User, file: UploadFile = File(...)):
+async def catalog_import(request: Request, kind: str, user: User, file: UploadFile = File(...), preview: bool = False):
     collection = request.app.state.catalog_service.collection_name(kind)
-    return await request.app.state.excel_service.import_catalog(user, collection, file)
+    return await request.app.state.excel_service.import_catalog(user, collection, file, preview=preview)
 
 
 @router.get("/catalog/unit-dds-mappings")

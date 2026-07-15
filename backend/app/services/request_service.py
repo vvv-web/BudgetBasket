@@ -17,6 +17,19 @@ class RequestService:
             *[item for item in self.repo.load_all("invest_items") if item["request_id"] == request_id],
         ]
 
+    def _assigned_economist_id(self, unit_id: str) -> str | None:
+        users = {item["id"]: item for item in self.repo.load_all("users")}
+        assignments = [
+            item
+            for item in self.repo.load_all("units_responsibles")
+            if item.get("unit_id") == unit_id
+            and item.get("is_active")
+            and users.get(item.get("user_id"), {}).get("role") == "economist"
+        ]
+        if len(assignments) > 1:
+            raise HTTPException(status_code=409, detail="Для модуля назначено несколько экономистов. Оставьте одного активного экономиста")
+        return assignments[0]["user_id"] if assignments else None
+
     @staticmethod
     def public_request(request: dict, summary: dict | None = None) -> dict:
         return {**request, "total_approved_sum": request.get("sum", 0), "summary": summary}
@@ -106,6 +119,7 @@ class RequestService:
             )
         ]
         request_ids = {item["id"] for item in requests}
+        frozen_request_ids = {item["id"] for item in requests if item.get("budget_frozen")}
         request_unit_ids = {item["id"]: root_unit_id(item["unit_id"]) for item in requests}
         dds_catalog = {item["id"]: item for item in self.repo.load_all("dds_catalog")}
         invest_catalog = {item["id"]: item for item in self.repo.load_all("invests_catalog")}
@@ -122,6 +136,7 @@ class RequestService:
 
         planned_total = 0.0
         approved_total = 0.0
+        frozen_total = 0.0
         for kind, collection, article_field, catalog in (
             ("dds", "dds_items", "dds_id", dds_catalog),
             ("invest", "invest_items", "invest_id", invest_catalog),
@@ -133,6 +148,8 @@ class RequestService:
                 approved = float(item.get("sum_fact") or 0) if item.get("status") in APPROVED_ITEM_STATUSES else 0.0
                 planned_total += planned
                 approved_total += approved
+                if approved and item.get("request_id") in frozen_request_ids:
+                    frozen_total += approved
                 article = catalog.get(item.get(article_field), {})
                 category = catalog.get(article.get("parent_id")) or article
                 add(by_category, f"{kind}:{category.get('id', 'unknown')}", category.get("name", "Без категории"), kind, planned, approved)
@@ -152,15 +169,18 @@ class RequestService:
 
         approved_requests = sum(1 for item in requests if item.get("status") in {RequestStatus.approved, RequestStatus.approved_with_changes, RequestStatus.partially_approved})
         review_requests = sum(1 for item in requests if item.get("status") == RequestStatus.on_review)
+        frozen_requests = sum(1 for item in requests if item.get("budget_frozen"))
         return {
             "scope": {"unit_id": unit_id, "available_units": available_units},
             "totals": {
                 "planned": planned_total,
                 "approved": approved_total,
+                "frozen": frozen_total,
                 "remaining": max(planned_total - approved_total, 0),
                 "requests_count": len(requests),
                 "approved_requests_count": approved_requests,
                 "review_requests_count": review_requests,
+                "frozen_requests_count": frozen_requests,
             },
             "by_unit": ordered(by_unit),
             "by_category": ordered(by_category),
@@ -209,7 +229,7 @@ class RequestService:
         if payload["unit_id"] not in self.permissions.employee_module_ids(user["id"]):
             raise HTTPException(status_code=403, detail="Employee is not responsible for this unit")
         item = {
-            "economist_id": payload.get("economist_id"),
+            "economist_id": self._assigned_economist_id(payload["unit_id"]),
             "unit_id": payload["unit_id"],
             "sum": 0,
             "status": RequestStatus.draft,
@@ -247,7 +267,17 @@ class RequestService:
             for item in self.repo.load_all(collection):
                 if item["request_id"] == request_id:
                     self.repo.update(collection, item["id"], {"status": ItemStatus.on_review})
-        return self.public_request(self.repo.update("requests", request_id, {"status": RequestStatus.on_review}), self.summary(request_id))
+        economist_id = budget_request.get("economist_id") or self._assigned_economist_id(budget_request["unit_id"])
+        if not economist_id:
+            raise HTTPException(status_code=400, detail="Для модуля не назначен экономист")
+        return self.public_request(
+            self.repo.update(
+                "requests",
+                request_id,
+                {"status": RequestStatus.on_review, "economist_id": economist_id},
+            ),
+            self.summary(request_id),
+        )
 
     def withdraw(self, user: dict, request_id: str) -> dict:
         budget_request = get_required(self.repo, "requests", request_id)

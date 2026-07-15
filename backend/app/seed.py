@@ -80,7 +80,13 @@ def seed_data(repo: Repository) -> None:
             {"id": MODULE_BETA_ID, "parent_id": DEPARTMENT_ID, "name": "Модуль аналитики", "is_active": True},
         ],
     )
-    repo.save_all("units_responsibles", [{"unit_id": MODULE_ALPHA_ID, "user_id": EMPLOYEE_ID, "is_active": True}])
+    repo.save_all(
+        "units_responsibles",
+        [
+            {"unit_id": MODULE_ALPHA_ID, "user_id": EMPLOYEE_ID, "is_active": True},
+            {"unit_id": MODULE_ALPHA_ID, "user_id": ECONOMIST_ID, "is_active": True},
+        ],
+    )
     repo.save_all(
         "dds_catalog",
         [

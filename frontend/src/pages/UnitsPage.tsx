@@ -3,7 +3,10 @@ import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import PersonRemoveOutlinedIcon from '@mui/icons-material/PersonRemoveOutlined';
+import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined';
 import Alert from '@mui/material/Alert';
+import Autocomplete from '@mui/material/Autocomplete';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
@@ -72,6 +75,38 @@ function PersonCard({ user, role, vacancy = false }: { user?: User; role: string
   );
 }
 
+function UserAutocomplete({
+  users,
+  value,
+  label,
+  required = false,
+  size,
+  onChange,
+}: {
+  users: User[];
+  value: string;
+  label: string;
+  required?: boolean;
+  size?: 'small' | 'medium';
+  onChange: (userId: string) => void;
+}) {
+  const unassigned: User = { id: '', login: 'Не назначен', role: 'employee' };
+  const options = [unassigned, ...users];
+  return (
+    <Autocomplete
+      fullWidth
+      sx={{ flex: 1, minWidth: 0 }}
+      options={options}
+      value={users.find((user) => user.id === value) || unassigned}
+      getOptionLabel={fullName}
+      isOptionEqualToValue={(option, selected) => option.id === selected.id}
+      noOptionsText="Пользователи не найдены"
+      onChange={(_, user) => onChange(user?.id || '')}
+      renderInput={(params) => <TextField {...params} required={required} label={label} size={size} />}
+    />
+  );
+}
+
 function UnitFormDialog({
   open,
   mode,
@@ -83,7 +118,9 @@ function UnitFormDialog({
   responsibleUserId,
   linkedEconomists,
   onAssignResponsible,
+  onUnassignResponsible,
   onAssignEconomist,
+  onUnassignEconomist,
   assignPending,
   onDelete,
   deletePending = false,
@@ -91,14 +128,22 @@ function UnitFormDialog({
   open: boolean;
   mode: UnitDialogMode | null;
   onClose: () => void;
-  onSubmit: (payload: { name: string; is_active: boolean; parent_id: string | null }) => void;
+  onSubmit: (payload: {
+    name: string;
+    is_active: boolean;
+    parent_id: string | null;
+    responsible_user_id?: string;
+    economist_id?: string;
+  }) => void;
   pending: boolean;
   employees: User[];
   economists: User[];
   responsibleUserId?: string | null;
   linkedEconomists: User[];
   onAssignResponsible: (userId: string) => void;
+  onUnassignResponsible: () => void;
   onAssignEconomist: (economistId: string) => void;
+  onUnassignEconomist: (economistId: string) => void;
   assignPending: boolean;
   onDelete?: () => void;
   deletePending?: boolean;
@@ -114,14 +159,14 @@ function UnitFormDialog({
       setName(mode.unit.name);
       setIsActive(mode.unit.is_active);
       setEmployeeId(responsibleUserId || '');
-      setEconomistId('');
+      setEconomistId(linkedEconomists[0]?.id || '');
     } else {
       setName('');
       setIsActive(true);
       setEmployeeId('');
       setEconomistId('');
     }
-  }, [open, mode, responsibleUserId]);
+  }, [open, mode, responsibleUserId, linkedEconomists]);
 
   if (!mode) return null;
 
@@ -138,14 +183,38 @@ function UnitFormDialog({
     mode.kind === 'create-child' ? mode.parent.id : mode.kind === 'edit' ? mode.unit.parent_id : null;
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-      <DialogTitle>{title}</DialogTitle>
-      <DialogContent>
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm" scroll="paper">
+      <DialogTitle sx={{ pr: isEdit && onDelete ? 7 : undefined }}>
+        {title}
+        {isEdit && onDelete && (
+          <Tooltip title="Удалить модуль">
+            <IconButton
+              color="error"
+              onClick={onDelete}
+              disabled={pending || deletePending}
+              sx={{ position: 'absolute', top: 18, right: 18 }}
+              aria-label="Удалить модуль"
+            >
+              <DeleteOutlineIcon />
+            </IconButton>
+          </Tooltip>
+        )}
+      </DialogTitle>
+      <DialogContent dividers>
         <Stack spacing={2.5} sx={{ pt: 1 }}>
           {mode.kind === 'create-child' && <Alert severity="info">Будет создан модуль внутри выбранного подразделения.</Alert>}
           {mode.kind === 'create-root' && <Alert severity="info">Подразделение верхнего уровня без родителя.</Alert>}
 
           <TextField label="Название" value={name} onChange={(event) => setName(event.target.value)} fullWidth autoFocus />
+          {mode.kind === 'create-child' && (
+            <>
+              <Divider />
+              <Typography variant="subtitle2" fontWeight={700}>Ответственные модуля</Typography>
+              <UserAutocomplete users={employees} value={employeeId} label="Сотрудник" required onChange={setEmployeeId} />
+              <UserAutocomplete users={economists} value={economistId} label="Экономист" required onChange={setEconomistId} />
+            </>
+          )}
+
           {isEdit && (
             <TextField
               select
@@ -166,80 +235,52 @@ function UnitFormDialog({
 
               {!isRoot && (
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25} alignItems={{ sm: 'center' }}>
-                  <TextField
-                    select
-                    size="small"
-                    label="Ответственный сотрудник"
-                    value={employeeId}
-                    onChange={(event) => setEmployeeId(event.target.value)}
-                    fullWidth
-                  >
-                    <MenuItem value="">Не выбран</MenuItem>
-                    {employees.map((employee) => (
-                      <MenuItem key={employee.id} value={employee.id}>{fullName(employee)}</MenuItem>
-                    ))}
-                  </TextField>
-                  <Button
-                    variant="outlined"
-                    disabled={!employeeId || assignPending}
-                    onClick={() => onAssignResponsible(employeeId)}
-                    sx={{ minWidth: 140, whiteSpace: 'nowrap' }}
-                  >
-                    Назначить
-                  </Button>
+                  <UserAutocomplete users={employees} value={employeeId} label="Ответственный сотрудник" size="small" onChange={setEmployeeId} />
+                  <Tooltip title={employeeId ? 'Сохранить назначение' : 'Снять ответственного'}>
+                    <Button
+                      variant="outlined"
+                      disabled={assignPending || (!employeeId && !responsibleUserId)}
+                      onClick={() => employeeId ? onAssignResponsible(employeeId) : onUnassignResponsible()}
+                      aria-label={employeeId ? 'Сохранить назначение' : 'Снять ответственного'}
+                      sx={{ minWidth: 44, width: 44, px: 0 }}
+                    >
+                      {employeeId ? <SaveOutlinedIcon fontSize="small" /> : <PersonRemoveOutlinedIcon fontSize="small" />}
+                    </Button>
+                  </Tooltip>
                 </Stack>
               )}
 
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25} alignItems={{ sm: 'center' }}>
-                <TextField
-                  select
-                  size="small"
-                  label="Экономист"
-                  value={economistId}
-                  onChange={(event) => setEconomistId(event.target.value)}
-                  fullWidth
-                >
-                  <MenuItem value="">Не выбран</MenuItem>
-                  {economists.map((economist) => (
-                    <MenuItem key={economist.id} value={economist.id}>{fullName(economist)}</MenuItem>
-                  ))}
-                </TextField>
-                <Button
-                  variant="outlined"
-                  disabled={!economistId || assignPending}
-                  onClick={() => onAssignEconomist(economistId)}
-                  sx={{ minWidth: 140, whiteSpace: 'nowrap' }}
-                >
-                  Закрепить
-                </Button>
+                <UserAutocomplete users={economists} value={economistId} label="Экономист" size="small" onChange={setEconomistId} />
+                <Tooltip title={economistId ? 'Сохранить назначение' : 'Снять экономиста'}>
+                  <Button
+                    variant="outlined"
+                    disabled={assignPending || (!economistId && linkedEconomists.length === 0)}
+                    onClick={() => economistId ? onAssignEconomist(economistId) : onUnassignEconomist(linkedEconomists[0].id)}
+                    aria-label={economistId ? 'Сохранить назначение' : 'Снять экономиста'}
+                    sx={{ minWidth: 44, width: 44, px: 0 }}
+                  >
+                    {economistId ? <SaveOutlinedIcon fontSize="small" /> : <PersonRemoveOutlinedIcon fontSize="small" />}
+                  </Button>
+                </Tooltip>
               </Stack>
 
-              <Box className="org-people-grid in-card">
-                {!isRoot && (
-                  responsibleUserId
-                    ? <PersonCard user={[...employees, ...economists].find((u) => u.id === responsibleUserId)} role="Ответственный сотрудник" />
-                    : <PersonCard role="Ответственный сотрудник" vacancy />
-                )}
-                {linkedEconomists.map((user) => (
-                  <PersonCard key={user.id} user={user} role="Экономист" />
-                ))}
-                {linkedEconomists.length === 0 && <PersonCard role="Экономист" vacancy />}
-              </Box>
             </>
           )}
         </Stack>
       </DialogContent>
       <DialogActions>
-        {isEdit && onDelete && (
-          <Button color="error" startIcon={<DeleteOutlineIcon />} onClick={onDelete} disabled={pending || deletePending}>
-            Удалить
-          </Button>
-        )}
         <Button onClick={onClose}>Отмена</Button>
         <Button
           variant="contained"
-          disabled={!name.trim() || pending}
-          onClick={() => onSubmit({ name: name.trim(), is_active: isActive, parent_id: parentId })}
+          disabled={!name.trim() || pending || (mode.kind === 'create-child' && (!employeeId || !economistId))}
+          onClick={() => onSubmit({
+            name: name.trim(),
+            is_active: isActive,
+            parent_id: parentId,
+            responsible_user_id: mode.kind === 'create-child' ? employeeId : undefined,
+            economist_id: mode.kind === 'create-child' ? economistId : undefined,
+          })}
         >
           {isEdit ? 'Сохранить' : 'Создать'}
         </Button>
@@ -411,13 +452,32 @@ export default function UnitsPage() {
   };
 
   const createUnit = useMutation({
-    mutationFn: (payload: { name: string; parent_id: string | null; is_active: boolean }) =>
-      api.post('/units', {
+    mutationFn: async (payload: {
+      name: string;
+      parent_id: string | null;
+      is_active: boolean;
+      responsible_user_id?: string;
+      economist_id?: string;
+    }) => {
+      const unit = (await api.post<Unit>('/units', {
         name: payload.name,
         parent_id: payload.parent_id,
         type: payload.parent_id ? 'module' : 'department',
         is_active: payload.is_active,
-      }),
+      })).data;
+      if (payload.responsible_user_id) {
+        await api.post(`/units/${unit.id}/responsible`, { user_id: payload.responsible_user_id });
+      }
+      if (payload.economist_id) {
+        await api.post('/economist-assignments', {
+          economist_id: payload.economist_id,
+          unit_id: unit.id,
+          assignment_type: 'module',
+          is_active: true,
+        });
+      }
+      return unit;
+    },
     onSuccess: (_data, payload) => {
       setDialog(null);
       refresh();
@@ -462,6 +522,12 @@ export default function UnitsPage() {
     onSuccess: refresh,
   });
 
+  const unassignResponsible = useMutation({
+    mutationFn: (unitId: string) => api.delete(`/units/${unitId}/responsible`),
+    onSuccess: refresh,
+    onError: (error) => toast(getErrorMessage(error, 'Не удалось снять ответственного сотрудника'), 'error'),
+  });
+
   const assign = useMutation({
     mutationFn: ({
       unitId,
@@ -479,9 +545,26 @@ export default function UnitsPage() {
         is_active: true,
       }),
     onSuccess: refresh,
+    onError: (error) => toast(getErrorMessage(error, 'Не удалось закрепить экономиста'), 'error'),
   });
 
-  const submitDialog = (payload: { name: string; is_active: boolean; parent_id: string | null }) => {
+  const unassign = useMutation({
+    mutationFn: ({ unitId, economistId }: { unitId: string; economistId: string }) =>
+      api.patch(`/economist-assignments/${encodeURIComponent(`${economistId}:${unitId}`)}`),
+    onSuccess: () => {
+      refresh();
+      toast('Экономист снят с модуля', 'success');
+    },
+    onError: (error) => toast(getErrorMessage(error, 'Не удалось снять экономиста с модуля'), 'error'),
+  });
+
+  const submitDialog = (payload: {
+    name: string;
+    is_active: boolean;
+    parent_id: string | null;
+    responsible_user_id?: string;
+    economist_id?: string;
+  }) => {
     if (!dialog) return;
     if (dialog.kind === 'edit') {
       updateUnit.mutate({ id: dialog.unit.id, ...payload });
@@ -588,6 +671,10 @@ export default function UnitsPage() {
           if (!editingUnit) return;
           responsible.mutate({ unitId: editingUnit.id, userId });
         }}
+        onUnassignResponsible={() => {
+          if (!editingUnit) return;
+          unassignResponsible.mutate(editingUnit.id);
+        }}
         onAssignEconomist={(economistId) => {
           if (!editingUnit) return;
           assign.mutate({
@@ -596,7 +683,11 @@ export default function UnitsPage() {
             assignmentType: editingUnit.parent_id ? 'module' : 'department',
           });
         }}
-        assignPending={responsible.isPending || assign.isPending}
+        onUnassignEconomist={(economistId) => {
+          if (!editingUnit) return;
+          unassign.mutate({ unitId: editingUnit.id, economistId });
+        }}
+        assignPending={responsible.isPending || unassignResponsible.isPending || assign.isPending || unassign.isPending}
       />
 
       <ConfirmDialog

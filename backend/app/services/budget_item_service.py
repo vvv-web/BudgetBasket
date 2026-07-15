@@ -30,6 +30,9 @@ class BudgetItemService:
         article = self.repo.get_by_id(self.catalog_collection(kind), article_id)
         if not article:
             raise HTTPException(status_code=400, detail="Catalog item not found")
+        parent = self.repo.get_by_id(self.catalog_collection(kind), article["parent_id"]) if article.get("parent_id") else None
+        if not article.get("is_active", True) or (parent is not None and not parent.get("is_active", True)):
+            raise HTTPException(status_code=400, detail="Нельзя использовать неактивную запись НСИ в строке заявки")
         return article.get("parent_id")
 
     def create_item(self, user: dict, request_id: str, kind: str, payload: dict) -> dict:
@@ -69,12 +72,20 @@ class BudgetItemService:
                 raise HTTPException(status_code=403, detail="Economist cannot change employee fields")
             allowed = {key: patch[key] for key in ("status", "sum_fact", "comment") if key in patch}
             status = allowed.get("status", item["status"])
-            if status == ItemStatus.approved and allowed.get("sum_fact") is None and item.get("sum_fact") is None:
-                allowed["sum_fact"] = item["sum_plan"]
-            if status == ItemStatus.approved_with_changes and allowed.get("sum_fact", item.get("sum_fact")) is None:
+            sum_fact = allowed.get("sum_fact", item.get("sum_fact"))
+            if status == ItemStatus.approved:
+                if sum_fact is None:
+                    allowed["sum_fact"] = item["sum_plan"]
+                elif float(sum_fact) != float(item["sum_plan"]):
+                    raise HTTPException(status_code=400, detail="Для статуса «Утверждено» фактическая сумма должна быть равна плановой")
+            if status == ItemStatus.approved_with_changes and sum_fact is None:
                 raise HTTPException(status_code=400, detail="sum_fact is required for approved_with_changes")
-            if status == ItemStatus.rejected and allowed.get("sum_fact", item.get("sum_fact")) not in (None, 0):
+            if status == ItemStatus.approved_with_changes and float(sum_fact) == float(item["sum_plan"]):
+                raise HTTPException(status_code=400, detail="Для статуса «Утверждено с изменениями» фактическая сумма должна отличаться от плановой")
+            if status == ItemStatus.rejected and sum_fact not in (None, 0):
                 raise HTTPException(status_code=400, detail="sum_fact must be empty or 0 for rejected items")
+            if status == ItemStatus.rejected:
+                allowed["sum_fact"] = 0
             return allowed
         forbidden = set(patch) - {"dds_id", "invest_id", "sum_plan"}
         if forbidden:
@@ -111,8 +122,6 @@ class BudgetItemService:
 
         updated = self.repo.update(collection, item_id, normalized)
         self.requests.recalculate_total(item["request_id"])
-        if user["role"] == "economist":
-            self.requests.refresh_review_status(item["request_id"])
         return updated
 
     def delete_item(self, user: dict, item_id: str) -> None:

@@ -37,7 +37,7 @@ import { api } from '../api/client';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useAppToast } from '../components/Layout';
 import { ItemStatusBadge, RequestStatusBadge } from '../components/StatusBadge';
-import type { BudgetItem, BudgetRequest, CatalogItem, FileAttachment, ItemStatus, Profile, User } from '../types';
+import type { BudgetItem, BudgetRequest, CatalogItem, FileAttachment, ItemStatus, Profile, Unit, User } from '../types';
 import { CLOSED_REQUEST_STATUSES } from '../types';
 import { downloadAuthorized, downloadBlob } from '../utils/download';
 import { itemStatusLabels, money } from '../utils/labels';
@@ -93,10 +93,53 @@ function catalogLabel(item: CatalogItem, catalog: CatalogItem[]) {
 }
 
 function leafItems(catalog: CatalogItem[]) {
-  const hasChildren = new Set(catalog.filter((item) => item.parent_id).map((item) => item.parent_id));
   const children = catalog.filter((item) => item.parent_id);
-  if (children.length > 0) return children;
-  return catalog.filter((item) => !hasChildren.has(item.id));
+  return [...children].sort((left, right) => {
+    const leftParent = catalog.find((item) => item.id === left.parent_id)?.name || '';
+    const rightParent = catalog.find((item) => item.id === right.parent_id)?.name || '';
+    return leftParent.localeCompare(rightParent, 'ru') || left.name.localeCompare(right.name, 'ru');
+  });
+}
+
+function selectableItems(catalog: CatalogItem[]) {
+  const activeParentIds = new Set(
+    catalog
+      .filter((item) => item.is_active && item.parent_id)
+      .map((item) => item.parent_id),
+  );
+  return catalog
+    .filter((item) => {
+      if (!item.is_active) return false;
+      if (!item.parent_id) return !activeParentIds.has(item.id);
+      return catalog.find((parent) => parent.id === item.parent_id)?.is_active === true;
+    })
+    .sort((left, right) => {
+      const leftParent = catalog.find((item) => item.id === left.parent_id)?.name || '';
+      const rightParent = catalog.find((item) => item.id === right.parent_id)?.name || '';
+      return leftParent.localeCompare(rightParent, 'ru') || left.name.localeCompare(right.name, 'ru');
+    });
+}
+
+function isInactiveCatalogSelection(catalog: CatalogItem[], articleId?: string | null) {
+  const article = catalog.find((item) => item.id === articleId);
+  if (!article) return false;
+  const parent = article.parent_id ? catalog.find((item) => item.id === article.parent_id) : undefined;
+  return !article.is_active || !!parent && !parent.is_active;
+}
+
+function reviewValidationError(item: BudgetItem, draft: Partial<BudgetItem>) {
+  const status = draft.status || item.status;
+  const sumFact = draft.sum_fact !== undefined ? draft.sum_fact : item.sum_fact;
+  if (status === 'approved' && sumFact !== null && Number(sumFact) !== Number(item.sum_plan)) {
+    return 'Для статуса «Утверждено» сумма должна совпадать с планом.';
+  }
+  if (status === 'approved_with_changes' && (sumFact === null || sumFact === undefined || Number(sumFact) === Number(item.sum_plan))) {
+    return 'Укажите сумму, отличающуюся от плановой.';
+  }
+  if (status === 'rejected' && sumFact !== null && Number(sumFact) !== 0) {
+    return 'Для отказа сумма должна быть пустой или равна нулю.';
+  }
+  return '';
 }
 
 function categoryName(catalog: CatalogItem[], articleId?: string | null) {
@@ -249,7 +292,7 @@ function AddItemForm({
   disabled: boolean;
 }) {
   const queryClient = useQueryClient();
-  const options = useMemo(() => leafItems(catalog), [catalog]);
+  const options = useMemo(() => selectableItems(catalog), [catalog]);
   const toast = useAppToast();
   const [article, setArticle] = useState<CatalogItem | null>(null);
   const [sumPlan, setSumPlan] = useState('');
@@ -325,7 +368,7 @@ function AddItemForm({
           <TextField
             {...params}
             label={kind === 'dds' ? 'Статья ДДС' : 'Инвест-проект'}
-            placeholder="Поиск по категориям НСИ"
+            placeholder="Поиск по статьям НСИ"
           />
         )}
       />
@@ -460,7 +503,12 @@ function ItemsTable({
 
   const patch = useMutation({
     mutationFn: ({ id, body }: { id: string; body: Partial<BudgetItem> }) => api.patch(`/${kind}-items/${id}`, body),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      setDrafts((current) => {
+        const next = { ...current };
+        delete next[variables.id];
+        return next;
+      });
       refresh();
       toast('Строка сохранена', 'success');
     },
@@ -497,9 +545,17 @@ function ItemsTable({
           const form = new FormData();
           form.append('file', file);
           await api.post(`/${kind}-items/${itemId}/files`, form);
+          setStagedFilesByItem((current) => ({
+            ...current,
+            [itemId]: (current[itemId] || []).filter((entry) => entry !== file),
+          }));
         }
         for (const fileId of pendingDeletedFileIdsByItem[itemId] || []) {
           await api.delete(`/${kind}-items/${itemId}/files/${fileId}`);
+          setPendingDeletedFileIdsByItem((current) => ({
+            ...current,
+            [itemId]: (current[itemId] || []).filter((id) => id !== fileId),
+          }));
         }
       }
     },
@@ -619,10 +675,16 @@ function ItemsTable({
             const local = drafts[item.id] || {};
             const hasDraftChanges = Object.keys(local).length > 0;
             const catalogId = kind === 'dds' ? item.dds_id : item.invest_id;
+            const inactiveCatalogSelection = isInactiveCatalogSelection(catalog, catalogId);
             const stagedFiles = stagedFilesByItem[item.id] || [];
             const pendingDeletedFileIds = pendingDeletedFileIdsByItem[item.id] || [];
+            const validationError = reviewValidationError(item, local);
             return (
-              <TableRow key={item.id}>
+              <TableRow
+                key={item.id}
+                className={inactiveCatalogSelection ? 'inactive-catalog-item' : ''}
+                sx={inactiveCatalogSelection ? { '& > .MuiTableCell-root': { bgcolor: 'rgba(237, 108, 2, 0.08)' } } : undefined}
+              >
                 <TableCell sx={{ px: 1, py: 1 }}>{categoryName(catalog, catalogId)}</TableCell>
                 <TableCell sx={{ px: 1, py: 1 }}>
                   {isEmployeeEditing ? (
@@ -638,10 +700,18 @@ function ItemsTable({
                       }
                       sx={{ width: '100%', minWidth: 0 }}
                     >
-                      {leafItems(catalog).map((entry) => <MenuItem key={entry.id} value={entry.id}>{catalogLabel(entry, catalog)}</MenuItem>)}
+                      {selectableItems(catalog).map((entry) => <MenuItem key={entry.id} value={entry.id}>{catalogLabel(entry, catalog)}</MenuItem>)}
+                      {inactiveCatalogSelection && catalogId && (
+                        <MenuItem value={catalogId} disabled>
+                          {catalogLabel(catalog.find((entry) => entry.id === catalogId)!, catalog)} (неактивна)
+                        </MenuItem>
+                      )}
                     </TextField>
                   ) : (
-                    catalog.find((entry) => entry.id === catalogId)?.name || catalogId
+                    <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap>
+                      <span>{catalog.find((entry) => entry.id === catalogId)?.name || catalogId}</span>
+                      {inactiveCatalogSelection && <Chip label="НСИ неактивна" size="small" color="warning" variant="outlined" />}
+                    </Stack>
                   )}
                 </TableCell>
                 <TableCell sx={{ px: 1, py: 1 }}>
@@ -688,8 +758,13 @@ function ItemsTable({
                       type="number"
                       value={local.sum_fact ?? item.sum_fact ?? ''}
                       onChange={(event) =>
-                        setDrafts({ ...drafts, [item.id]: { ...local, sum_fact: Number(event.target.value) } })
+                        setDrafts({
+                          ...drafts,
+                          [item.id]: { ...local, sum_fact: event.target.value === '' ? null : Number(event.target.value) },
+                        })
                       }
+                      error={!!validationError}
+                      helperText={validationError || undefined}
                       sx={{ width: '100%', minWidth: 0 }}
                     />
                   ) : (
@@ -745,12 +820,12 @@ function ItemsTable({
                       />
                     )}
                     {canEconomist ? (
-                      <Tooltip title="Сохранить изменения строки">
+                      <Tooltip title={validationError || 'Сохранить изменения строки'}>
                         <IconButton
                           size="small"
                           color="primary"
                           onClick={() => patch.mutate({ id: item.id, body: drafts[item.id] || {} })}
-                          disabled={!hasDraftChanges || patch.isPending}
+                          disabled={!hasDraftChanges || !!validationError || patch.isPending}
                           aria-label="Сохранить"
                         >
                           <SaveOutlinedIcon fontSize="small" />
@@ -811,10 +886,15 @@ export default function RequestDetailsPage({ user }: { user: User }) {
   const toast = useAppToast();
   const detailsKey = ['request-details', id];
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<'withdraw' | 'approve-all-items' | null>(null);
 
   const { data: request } = useQuery({
     queryKey: detailsKey,
     queryFn: async () => (await api.get<BudgetRequest>(`/requests/${id}`)).data,
+  });
+  const { data: units = [] } = useQuery({
+    queryKey: ['units'],
+    queryFn: async () => (await api.get<Unit[]>('/units')).data,
   });
   const { data: counterparty } = useQuery({
     queryKey: [...detailsKey, 'counterparty-contact'],
@@ -832,17 +912,35 @@ export default function RequestDetailsPage({ user }: { user: User }) {
     enabled: !!request,
   });
 
-  const moduleId = request?.unit_id;
-  const catalogParams = { module_id: moduleId, active_only: true };
+  const unitById = useMemo(() => new Map(units.map((unit) => [unit.id, unit])), [units]);
+  const requestDepartmentId = useMemo(() => {
+    let currentId = request?.unit_id || '';
+    while (currentId) {
+      const unit = unitById.get(currentId);
+      if (!unit?.parent_id) return currentId;
+      currentId = unit.parent_id;
+    }
+    return request?.unit_id || '';
+  }, [request?.unit_id, unitById]);
+  const formatUnitName = (unitId: string | null | undefined) => unitById.get(unitId || '')?.name || unitId || '—';
+  const requestUnitName = formatUnitName(request?.unit_id);
+  const employeeUnitNames = useMemo(
+    () => (user.unit_ids || []).map((unitId) => formatUnitName(unitId)).filter(Boolean),
+    [unitById, user.unit_ids],
+  );
+  const catalogUnitId = requestDepartmentId;
+  // Keep inactive records in the response so already saved request lines can be identified.
+  // selectableItems still exposes only active records in create/edit controls.
+  const catalogParams = { unit_id: catalogUnitId || undefined };
   const { data: ddsCatalog = [] } = useQuery({
-    queryKey: ['dds-catalog', moduleId],
+    queryKey: ['dds-catalog', catalogUnitId],
     queryFn: async () => (await api.get<CatalogItem[]>('/catalog/dds', { params: catalogParams })).data,
-    enabled: !!moduleId,
+    enabled: !!catalogUnitId,
   });
   const { data: investCatalog = [] } = useQuery({
-    queryKey: ['invest-catalog', moduleId],
+    queryKey: ['invest-catalog', catalogUnitId],
     queryFn: async () => (await api.get<CatalogItem[]>('/catalog/invests', { params: catalogParams })).data,
-    enabled: !!moduleId,
+    enabled: !!catalogUnitId,
   });
 
   const lifecycle = useMutation({
@@ -904,9 +1002,9 @@ export default function RequestDetailsPage({ user }: { user: User }) {
   return (
     <Stack spacing={3}>
       <Stack spacing={3}>
-        <Card className={`metric-card ${isHighlightedClosed ? 'fixed-request' : ''} ${request.budget_frozen ? 'budget-frozen-card' : ''}`} elevation={0}>
-          <CardContent>
-            <Stack spacing={3}>
+        <Card className={`metric-card request-summary-card ${isHighlightedClosed ? 'fixed-request' : ''} ${request.budget_frozen ? 'budget-frozen-card' : ''}`} elevation={0}>
+          <CardContent className="request-summary-content">
+            <Stack spacing={2}>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'flex-start' }} justifyContent="space-between">
                 <Stack spacing={1.25}>
                   <Typography variant="h6">Сводка заявки</Typography>
@@ -916,7 +1014,7 @@ export default function RequestDetailsPage({ user }: { user: User }) {
                   </Stack>
                 </Stack>
                 <Stack spacing={1} alignItems={{ xs: 'stretch', sm: 'flex-end' }} sx={{ width: { xs: '100%', sm: 'auto' } }}>
-                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap justifyContent={{ xs: 'flex-start', sm: 'flex-end' }}>
+                  <Stack className="request-summary-actions" direction="row" spacing={1} flexWrap="wrap" useFlexGap justifyContent={{ xs: 'flex-start', sm: 'flex-end' }}>
                     {canFreezeBudget && (
                       <Button startIcon={<LockOutlinedIcon />} variant="outlined" onClick={() => lifecycle.mutate('freeze-budget')}>
                         Зафиксировать бюджет
@@ -928,12 +1026,12 @@ export default function RequestDetailsPage({ user }: { user: User }) {
                       </Button>
                     )}
                     {canApproveAllItems && (
-                      <Button startIcon={<DoneAllIcon />} variant="contained" onClick={() => lifecycle.mutate('approve-all-items')}>
+                      <Button startIcon={<DoneAllIcon />} variant="contained" onClick={() => setConfirmAction('approve-all-items')}>
                         Зафиксировать все строки
                       </Button>
                     )}
                     {canWithdraw && (
-                      <Button startIcon={<UndoIcon />} variant="outlined" onClick={() => lifecycle.mutate('withdraw')}>
+                      <Button startIcon={<UndoIcon />} variant="outlined" onClick={() => setConfirmAction('withdraw')}>
                         Отозвать в черновик
                       </Button>
                     )}
@@ -992,14 +1090,42 @@ export default function RequestDetailsPage({ user }: { user: User }) {
                   Бюджет зафиксирован. Пока он не разморожен, редактирование заявки, строк и файлов недоступно.
                 </Alert>
               )}
-              <Stack direction={{ xs: 'column', md: 'row' }} spacing={4} flexWrap="wrap">
-                <Typography>План: <b>{money(request.summary?.planned_sum)}</b></Typography>
-                <Typography>Утверждено: <b>{money(request.summary?.approved_sum)}</b></Typography>
-                <Typography>Строк: <b>{request.summary?.items_count || 0}</b></Typography>
-                <Typography>Принято: <b>{request.summary?.accepted_count || 0}</b></Typography>
-                <Typography>Отказано: <b>{request.summary?.rejected_count || 0}</b></Typography>
-                <Typography>На рассмотрении: <b>{request.summary?.in_review_count || 0}</b></Typography>
-              </Stack>
+              <Box className="request-summary-context">
+                <Typography variant="caption" color="text.secondary">Объединение заявки</Typography>
+                <Typography fontWeight={700}>{requestUnitName}</Typography>
+                {user.role === 'employee' ? (
+                  <>
+                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1.25 }}>Объединение сотрудника</Typography>
+                    <Typography fontWeight={700}>{employeeUnitNames.length ? employeeUnitNames.join(', ') : 'не назначено'}</Typography>
+                  </>
+                ) : null}
+              </Box>
+              <Box className="request-summary-metrics">
+                <Box className="request-summary-metric request-summary-metric-primary">
+                  <Typography variant="caption" color="text.secondary">План</Typography>
+                  <Typography variant="h6">{money(request.summary?.planned_sum)}</Typography>
+                </Box>
+                <Box className="request-summary-metric request-summary-metric-approved">
+                  <Typography variant="caption" color="text.secondary">Утверждено</Typography>
+                  <Typography variant="h6">{money(request.summary?.approved_sum)}</Typography>
+                </Box>
+                <Box className="request-summary-metric">
+                  <Typography variant="caption" color="text.secondary">Строк</Typography>
+                  <Typography variant="h6">{request.summary?.items_count || 0}</Typography>
+                </Box>
+                <Box className="request-summary-metric">
+                  <Typography variant="caption" color="text.secondary">Принято</Typography>
+                  <Typography variant="h6" color="success.main">{request.summary?.accepted_count || 0}</Typography>
+                </Box>
+                <Box className="request-summary-metric">
+                  <Typography variant="caption" color="text.secondary">Отказано</Typography>
+                  <Typography variant="h6" color="error.main">{request.summary?.rejected_count || 0}</Typography>
+                </Box>
+                <Box className="request-summary-metric">
+                  <Typography variant="caption" color="text.secondary">На рассмотрении</Typography>
+                  <Typography variant="h6" color="warning.main">{request.summary?.in_review_count || 0}</Typography>
+                </Box>
+              </Box>
             </Stack>
           </CardContent>
         </Card>
@@ -1026,6 +1152,23 @@ export default function RequestDetailsPage({ user }: { user: User }) {
           <ItemsTable title="Строки инвест-проектов" kind="invest" request={request} user={user} items={invest} catalog={investCatalog} />
         </Paper>
       </Stack>
+
+      <ConfirmDialog
+        open={!!confirmAction}
+        title={confirmAction === 'withdraw' ? 'Отозвать заявку в черновик?' : 'Зафиксировать все строки?'}
+        description={
+          confirmAction === 'withdraw'
+            ? 'Заявка вернётся в черновик, и сотрудник снова сможет изменять строки и файлы.'
+            : 'Все ещё не рассмотренные строки будут утверждены. Фактическая сумма для них будет принята равной плановой, после чего проверка завершится.'
+        }
+        confirmLabel={confirmAction === 'withdraw' ? 'Отозвать' : 'Зафиксировать все'}
+        pending={lifecycle.isPending}
+        onClose={() => setConfirmAction(null)}
+        onConfirm={() => {
+          if (!confirmAction) return;
+          lifecycle.mutate(confirmAction, { onSuccess: () => setConfirmAction(null) });
+        }}
+      />
 
       <ConfirmDialog
         open={deleteOpen}

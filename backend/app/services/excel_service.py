@@ -252,7 +252,7 @@ class ExcelService:
             None,
         )
 
-    async def import_catalog(self, user: dict, collection: str, upload: UploadFile) -> dict:
+    async def import_catalog(self, user: dict, collection: str, upload: UploadFile, *, preview: bool = False) -> dict:
         require_role(user, "admin")
         filename = (upload.filename or "").lower()
         if not filename.endswith(".xlsx"):
@@ -273,8 +273,7 @@ class ExcelService:
         if "name" not in headers:
             raise HTTPException(status_code=400, detail="В первой строке должен быть столбец name / Название / Подкатегория")
 
-        created = 0
-        updated = 0
+        prepared: list[dict] = []
         errors: list[str] = []
 
         for row_index, values in enumerate(rows[1:], start=2):
@@ -295,23 +294,88 @@ class ExcelService:
                 errors.append(f"Строка {row_index}: {exc.detail}")
                 continue
 
-            is_active = self._as_bool(row.get("is_active"), True)
+            prepared.append(
+                {
+                    "row": row_index,
+                    "name": name,
+                    "category": category_name,
+                    "unit_id": unit_id,
+                    "unit_name": str(row.get("unit_name") or "").strip(),
+                    "is_active": self._as_bool(row.get("is_active"), True),
+                }
+            )
+
+        # Импорт применяется только целиком: ошибки в любой строке не должны оставлять
+        # в справочнике частично загруженные данные.
+        if errors:
+            return {
+                "preview": preview,
+                "created": 0,
+                "updated": 0,
+                "errors": errors,
+                "rows": prepared,
+                "collection": collection,
+            }
+
+        if preview:
+            preview_rows = []
+            created = 0
+            updated = 0
+            catalog = self.repo.load_all(collection)
+            for item in prepared:
+                parent = next(
+                    (
+                        entry
+                        for entry in catalog
+                        if item["category"]
+                        and not entry.get("parent_id")
+                        and entry.get("unit_id") == item["unit_id"]
+                        and entry.get("name", "").strip().casefold() == item["category"].casefold()
+                    ),
+                    None,
+                )
+                existing = self._find_leaf(
+                    collection,
+                    name=item["name"],
+                    parent_id=parent["id"] if parent else None,
+                    unit_id=item["unit_id"],
+                )
+                action = "update" if existing else "create"
+                updated += int(bool(existing))
+                created += int(not existing)
+                preview_rows.append({**item, "action": action})
+            return {
+                "preview": True,
+                "created": created,
+                "updated": updated,
+                "errors": [],
+                "rows": preview_rows,
+                "collection": collection,
+            }
+
+        created = 0
+        updated = 0
+        for item in prepared:
             parent = None
-            if category_name:
+            if item["category"]:
                 parent = self._ensure_category(
                     collection,
-                    category_name=category_name,
-                    unit_id=unit_id,
+                    category_name=item["category"],
+                    unit_id=item["unit_id"],
                     is_active=True,
                 )
-
             payload = {
-                "name": name,
+                "name": item["name"],
                 "parent_id": parent["id"] if parent else None,
-                "unit_id": unit_id,
-                "is_active": is_active,
+                "unit_id": item["unit_id"],
+                "is_active": item["is_active"],
             }
-            existing = self._find_leaf(collection, name=name, parent_id=payload["parent_id"], unit_id=unit_id)
+            existing = self._find_leaf(
+                collection,
+                name=item["name"],
+                parent_id=payload["parent_id"],
+                unit_id=item["unit_id"],
+            )
             if existing:
                 self.repo.update(collection, existing["id"], payload)
                 updated += 1
@@ -319,7 +383,14 @@ class ExcelService:
                 self.repo.create(collection, payload)
                 created += 1
 
-        return {"created": created, "updated": updated, "errors": errors, "collection": collection}
+        return {
+            "preview": False,
+            "created": created,
+            "updated": updated,
+            "errors": [],
+            "rows": prepared,
+            "collection": collection,
+        }
 
     def _unit_name(self, unit_id: str | None) -> str:
         if not unit_id:
@@ -382,7 +453,8 @@ class ExcelService:
                 )
         return rows
 
-    CLOSED_STATUSES = {status.value for status in EXPORTABLE_REQUEST_STATUSES}
+    CLOSED_STATUSES = {status.value for status in EXPORTABLE_REQUEST_STATUSES} | {"rejected"}
+    DEFAULT_EXPORT_STATUSES = {status.value for status in EXPORTABLE_REQUEST_STATUSES}
 
     def export_closed_request(self, user: dict, request_id: str) -> Path:
         request = get_required(self.repo, "requests", request_id)
@@ -398,7 +470,7 @@ class ExcelService:
         statuses: set[str] | None = None,
         include_files: bool = False,
     ) -> Path:
-        selected_statuses = self.CLOSED_STATUSES if statuses is None else statuses
+        selected_statuses = self.DEFAULT_EXPORT_STATUSES if statuses is None else statuses
         if not selected_statuses or not selected_statuses.issubset(self.CLOSED_STATUSES):
             raise HTTPException(status_code=400, detail="Выберите допустимые статусы для экспорта")
         requests = [

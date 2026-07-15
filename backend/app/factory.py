@@ -3,7 +3,10 @@ import time
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from swagger_ui_bundle import swagger_ui_path
 
 from app.config import Settings, get_settings
 from app.database import create_engine_from_url, create_session_factory
@@ -26,7 +29,10 @@ from app.services.file_guard_client import FileGuardClient
 
 
 def create_app(*, repository: Repository | None = None, settings: Settings | None = None) -> FastAPI:
-    app = FastAPI(title="BudgetBasket API", version="0.1.0")
+    app = FastAPI(title="BudgetBasket API", version="0.1.0", docs_url=None)
+    # swagger-ui-bundle поставляет локальный Swagger UI с поддержкой OpenAPI 3.0.
+    # Явно фиксируем версию схемы, чтобы /docs работал без внешнего CDN.
+    app.openapi_version = "3.0.3"
     settings = settings or get_settings()
     storage_root = Path(os.getenv("BUDGET_STORAGE_DIR", Path(__file__).resolve().parents[2] / "storage"))
     upload_dir = Path(os.getenv("BUDGET_UPLOAD_DIR", storage_root / "uploads"))
@@ -64,6 +70,17 @@ def create_app(*, repository: Repository | None = None, settings: Settings | Non
         allow_headers=["*"],
     )
     app.include_router(router)
+    app.mount("/docs-assets", StaticFiles(directory=swagger_ui_path), name="swagger-ui")
+
+    @app.get("/docs", include_in_schema=False)
+    def swagger_ui():
+        return get_swagger_ui_html(
+            openapi_url=app.openapi_url,
+            title=f"{app.title} - Swagger UI",
+            swagger_js_url="/docs-assets/swagger-ui-bundle.js",
+            swagger_css_url="/docs-assets/swagger-ui.css",
+            swagger_favicon_url="/docs-assets/favicon-32x32.png",
+        )
 
     @app.on_event("startup")
     def startup() -> None:

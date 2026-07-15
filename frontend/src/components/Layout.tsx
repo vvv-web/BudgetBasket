@@ -4,6 +4,7 @@ import DashboardIcon from '@mui/icons-material/Dashboard';
 import FolderIcon from '@mui/icons-material/Folder';
 import LogoutIcon from '@mui/icons-material/Logout';
 import MenuIcon from '@mui/icons-material/Menu';
+import MenuOpenIcon from '@mui/icons-material/MenuOpen';
 import MenuBookIcon from '@mui/icons-material/MenuBook';
 import PeopleIcon from '@mui/icons-material/People';
 import SchemaIcon from '@mui/icons-material/Schema';
@@ -24,7 +25,7 @@ import ListItemText from '@mui/material/ListItemText';
 import Snackbar from '@mui/material/Snackbar';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
-import Toolbar from '@mui/material/Toolbar';
+import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
@@ -38,7 +39,8 @@ import { roleLabels } from '../utils/labels';
 import { EMAIL_RE, PHONE_RE, formatPhone, lettersOnly } from '../utils/validation';
 import { AppBreadcrumbs, breadcrumblessPaths } from './AppBreadcrumbs';
 
-const drawerWidth = 280;
+const expandedDrawerWidth = 280;
+const collapsedDrawerWidth = 76;
 
 const PageActionsContext = createContext<{
   setActions: (node: ReactNode) => void;
@@ -111,6 +113,9 @@ export function Layout({
   const [actions, setActions] = useState<ReactNode>(null);
   const [leading, setLeading] = useState<ReactNode>(null);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const [desktopDrawerCollapsed, setDesktopDrawerCollapsed] = useState(
+    () => window.localStorage.getItem('budgetbasket:drawer-collapsed') === 'true',
+  );
   const [toast, setToast] = useState<{ message: string; severity: ToastSeverity; key: number } | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileForm, setProfileForm] = useState<ProfileDraft>(emptyProfile);
@@ -180,8 +185,8 @@ export function Layout({
     (!!profileForm.phone && !PHONE_RE.test(profileForm.phone));
 
   const items = [
-    { label: 'Заявки', to: '/requests', icon: <FolderIcon /> },
     ...(user.role !== 'employee' ? [{ label: 'Сводка', to: '/', icon: <DashboardIcon /> }] : []),
+    { label: 'Заявки', to: '/requests', icon: <FolderIcon /> },
     ...(user.role === 'admin'
       ? [
           { label: 'Пользователи', to: '/users', icon: <PeopleIcon /> },
@@ -190,52 +195,87 @@ export function Layout({
         ]
       : []),
   ];
+  const drawerCollapsed = !isMobile && desktopDrawerCollapsed;
+  const drawerWidth = drawerCollapsed ? collapsedDrawerWidth : expandedDrawerWidth;
+
+  const toggleDesktopDrawer = () => {
+    setDesktopDrawerCollapsed((current) => {
+      window.localStorage.setItem('budgetbasket:drawer-collapsed', String(!current));
+      return !current;
+    });
+  };
 
   return (
     <Box className="app-shell">
       <Drawer
-        className="app-drawer"
+        className={`app-drawer ${drawerCollapsed ? 'app-drawer-collapsed' : ''}`}
         variant={isMobile ? 'temporary' : 'permanent'}
         open={isMobile ? mobileDrawerOpen : true}
         onClose={() => setMobileDrawerOpen(false)}
         ModalProps={{ keepMounted: true }}
-        sx={{ width: drawerWidth, '& .MuiDrawer-paper': { width: drawerWidth, boxSizing: 'border-box' } }}
+        sx={{
+          width: drawerWidth,
+          flexShrink: 0,
+          transition: theme.transitions.create('width', {
+            easing: theme.transitions.easing.sharp,
+            duration: theme.transitions.duration.standard,
+          }),
+          '& .MuiDrawer-paper': {
+            width: drawerWidth,
+            boxSizing: 'border-box',
+            overflowX: 'hidden',
+            transition: theme.transitions.create('width', {
+              easing: theme.transitions.easing.sharp,
+              duration: theme.transitions.duration.standard,
+            }),
+          },
+        }}
       >
-        <Toolbar>
+        <Box className="drawer-header">
           <Stack spacing={1.75} sx={{ width: '100%' }}>
-            <Stack direction="row" spacing={1.5} alignItems="center">
-              <Box className="brand-mark">BB</Box>
-              <Box>
+            <Stack direction="row" spacing={1.25} alignItems="center" justifyContent={drawerCollapsed ? 'center' : 'space-between'}>
+              {!drawerCollapsed && <Box className="brand-mark">BB</Box>}
+              {!drawerCollapsed && <Box sx={{ flex: 1 }}>
                 <Typography sx={{ fontFamily: '"Plus Jakarta Sans", sans-serif', fontWeight: 700, letterSpacing: '-0.03em' }}>
                   BudgetBasket
                 </Typography>
                 <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: 12 }}>
                   Бюджетирование модулей
                 </Typography>
-              </Box>
+              </Box>}
+              <IconButton
+                className="system-menu-button"
+                aria-label={isMobile ? 'Закрыть меню' : drawerCollapsed ? 'Развернуть меню' : 'Свернуть меню'}
+                onClick={isMobile ? () => setMobileDrawerOpen(false) : toggleDesktopDrawer}
+                size="small"
+              >
+                {isMobile || !drawerCollapsed ? <MenuOpenIcon /> : <MenuIcon />}
+              </IconButton>
             </Stack>
           </Stack>
-        </Toolbar>
+        </Box>
         <Divider />
         <List>
           {items.map((item) => {
             const selected = item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to);
             return (
-              <ListItemButton
-                key={item.to}
-                selected={selected}
-                onClick={() => {
-                  navigate(item.to);
-                  setMobileDrawerOpen(false);
-                }}
-              >
-                <ListItemIcon>{item.icon}</ListItemIcon>
-                <ListItemText primary={item.label} />
-              </ListItemButton>
+              <Tooltip key={item.to} title={item.label} placement="right" enterDelay={150} disableHoverListener={!drawerCollapsed}>
+                <ListItemButton
+                  className="drawer-nav-item"
+                  selected={selected}
+                  onClick={() => {
+                    navigate(item.to);
+                    setMobileDrawerOpen(false);
+                  }}
+                >
+                  <ListItemIcon>{item.icon}</ListItemIcon>
+                  {!drawerCollapsed && <ListItemText primary={item.label} />}
+                </ListItemButton>
+              </Tooltip>
             );
           })}
         </List>
-        <Box sx={{ flex: 1 }} />
+        <Box className="drawer-footer">
         <Divider />
         <List sx={{ py: 0.5 }}>
           <ListItemButton
@@ -246,17 +286,18 @@ export function Layout({
               setMobileDrawerOpen(false);
             }}
             aria-label="Открыть профиль"
-            title={displayName}
           >
             <ListItemIcon className="drawer-profile-icon">
               <AccountCircleIcon />
             </ListItemIcon>
-            <ListItemText
-              primary={displayName}
-              secondary={roleLabels[user.role]}
-              primaryTypographyProps={{ sx: { whiteSpace: 'normal', lineHeight: 1.2, overflowWrap: 'anywhere' } }}
-              secondaryTypographyProps={{ sx: { whiteSpace: 'normal', lineHeight: 1.1 } }}
-            />
+            {!drawerCollapsed && (
+              <ListItemText
+                primary={displayName}
+                secondary={roleLabels[user.role]}
+                primaryTypographyProps={{ sx: { whiteSpace: 'normal', lineHeight: 1.2, overflowWrap: 'anywhere' } }}
+                secondaryTypographyProps={{ sx: { whiteSpace: 'normal', lineHeight: 1.1 } }}
+              />
+            )}
           </ListItemButton>
         </List>
         <Box sx={{ px: 2, pt: 0.5, pb: 1.5 }}>
@@ -268,9 +309,12 @@ export function Layout({
               onLogout();
             }}
             variant="outlined"
+            aria-label="Выйти"
+            sx={drawerCollapsed ? { minWidth: 0, px: 0, '& .MuiButton-startIcon': { m: 0 } } : undefined}
           >
-            Выйти
+            {drawerCollapsed ? null : 'Выйти'}
           </Button>
+        </Box>
         </Box>
       </Drawer>
 
@@ -379,7 +423,7 @@ export function Layout({
                   <IconButton
                     aria-label="Открыть меню"
                     onClick={() => setMobileDrawerOpen(true)}
-                    sx={{ color: 'text.primary', border: '1px solid', borderColor: 'divider', bgcolor: 'background.paper' }}
+                    className="system-menu-button"
                   >
                     <MenuIcon />
                   </IconButton>
