@@ -2,6 +2,7 @@ import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import CloseIcon from '@mui/icons-material/Close';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import FolderIcon from '@mui/icons-material/Folder';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import LogoutIcon from '@mui/icons-material/Logout';
 import MenuIcon from '@mui/icons-material/Menu';
 import MenuOpenIcon from '@mui/icons-material/MenuOpen';
@@ -38,6 +39,7 @@ import type { Profile, User } from '../types';
 import { roleLabels } from '../utils/labels';
 import { EMAIL_RE, PHONE_RE, formatPhone, lettersOnly } from '../utils/validation';
 import { AppBreadcrumbs, breadcrumblessPaths } from './AppBreadcrumbs';
+import { UserGuideDialog } from './UserGuideDialog';
 
 const expandedDrawerWidth = 280;
 const collapsedDrawerWidth = 76;
@@ -118,6 +120,7 @@ export function Layout({
   );
   const [toast, setToast] = useState<{ message: string; severity: ToastSeverity; key: number } | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [profileForm, setProfileForm] = useState<ProfileDraft>(emptyProfile);
   const showPageChrome = isMobile || !breadcrumblessPaths.has(location.pathname) || !!actions || !!leading;
   const chrome = useMemo(() => ({ setActions, setLeading }), []);
@@ -278,6 +281,21 @@ export function Layout({
         <Box className="drawer-footer">
         <Divider />
         <List sx={{ py: 0.5 }}>
+          <Tooltip title="Памятка" placement="right" enterDelay={150} disableHoverListener={!drawerCollapsed}>
+            <ListItemButton
+              dense
+              onClick={() => {
+                setGuideOpen(true);
+                setMobileDrawerOpen(false);
+              }}
+              aria-label="Открыть памятку пользователя"
+            >
+              <ListItemIcon>
+                <HelpOutlineIcon />
+              </ListItemIcon>
+              {!drawerCollapsed && <ListItemText primary="Памятка" />}
+            </ListItemButton>
+          </Tooltip>
           <ListItemButton
             className="drawer-profile-item"
             dense
@@ -317,6 +335,8 @@ export function Layout({
         </Box>
         </Box>
       </Drawer>
+
+      <UserGuideDialog role={user.role} open={guideOpen} onClose={() => setGuideOpen(false)} />
 
       <Dialog open={profileOpen} onClose={() => setProfileOpen(false)} fullWidth maxWidth="sm" className="profile-dialog">
         <DialogTitle sx={{ pr: 6, pb: 1.5 }}>

@@ -1,17 +1,17 @@
 services:
   postgres:
-    image: postgres:16
-    container_name: bb-postgres
+    image: ${POSTGRES_IMAGE}
+    container_name: ${POSTGRES_CONTAINER_NAME}
     environment:
-      POSTGRES_DB: budgetbasket
-      POSTGRES_USER: budgetbasket
-      POSTGRES_PASSWORD: budgetbasket
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
-      - "5433:5432"
+      - "${POSTGRES_HOST_PORT}:${POSTGRES_CONTAINER_PORT}"
     volumes:
       - budgetbasket_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U budgetbasket -d budgetbasket"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -19,34 +19,34 @@ services:
       - data
 
   seaweedfs:
-    image: chrislusf/seaweedfs:latest
-    container_name: bb-seaweedfs
+    image: ${SEAWEEDFS_IMAGE}
+    container_name: ${SEAWEEDFS_CONTAINER_NAME}
     command: >
       server
-      -dir=/data
+      -dir=${SEAWEEDFS_DATA_DIR}
       -s3
-      -s3.port=8333
+      -s3.port=${SEAWEEDFS_S3_PORT}
       -filer
-      -filer.port=8888
-      -master.port=9333
-      -volume.port=8080
+      -filer.port=${SEAWEEDFS_FILER_PORT}
+      -master.port=${SEAWEEDFS_MASTER_PORT}
+      -volume.port=${SEAWEEDFS_VOLUME_PORT}
     ports:
-      - "8333:8333"
-      - "8888:8888"
-      - "9333:9333"
+      - "${SEAWEEDFS_S3_HOST_PORT}:${SEAWEEDFS_S3_PORT}"
+      - "${SEAWEEDFS_FILER_HOST_PORT}:${SEAWEEDFS_FILER_PORT}"
+      - "${SEAWEEDFS_MASTER_HOST_PORT}:${SEAWEEDFS_MASTER_PORT}"
     volumes:
-      - budgetbasket_seaweedfs_data:/data
+      - budgetbasket_seaweedfs_data:${SEAWEEDFS_DATA_DIR}
     networks:
       - storage
 
   pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: bb-pgadmin
+    image: ${PGADMIN_IMAGE}
+    container_name: ${PGADMIN_CONTAINER_NAME}
     environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@budgetbasket.com}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
     ports:
-      - "5050:80"
+      - "${PGADMIN_HOST_PORT}:80"
     depends_on:
       postgres:
         condition: service_healthy
@@ -57,32 +57,34 @@ services:
     build:
       context: .
       dockerfile: file_guard/Dockerfile
-    container_name: bb-file-guard
+    container_name: ${FILE_GUARD_CONTAINER_NAME}
     environment:
-      FILE_GUARD_MAX_FILE_SIZE_BYTES: ${FILE_GUARD_MAX_FILE_SIZE_BYTES:-26214400}
-      FILE_GUARD_ALLOWED_EXTENSIONS: ${FILE_GUARD_ALLOWED_EXTENSIONS:-.pdf,.png,.jpg,.jpeg,.xlsx,.docx}
-      FILE_GUARD_ALLOWED_MIME_TYPES: ${FILE_GUARD_ALLOWED_MIME_TYPES:-application/pdf,image/png,image/jpeg,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document}
-      FILE_GUARD_STRUCTURAL_VALIDATION_ENABLED: ${FILE_GUARD_STRUCTURAL_VALIDATION_ENABLED:-true}
-      FILE_GUARD_ALLOW_LIBMAGIC_FALLBACK: ${FILE_GUARD_ALLOW_LIBMAGIC_FALLBACK:-true}
-      FILE_GUARD_ANTIVIRUS_ENABLED: ${FILE_GUARD_ANTIVIRUS_ENABLED:-true}
-      FILE_GUARD_REQUIRE_ANTIVIRUS: ${FILE_GUARD_REQUIRE_ANTIVIRUS:-true}
-      FILE_GUARD_ANTIVIRUS_TIMEOUT_SECONDS: ${FILE_GUARD_ANTIVIRUS_TIMEOUT_SECONDS:-10}
-      FILE_GUARD_SCAN_TIMEOUT_SECONDS: ${FILE_GUARD_SCAN_TIMEOUT_SECONDS:-30}
-      FILE_GUARD_CLAMD_STREAM_CHUNK_BYTES: ${FILE_GUARD_CLAMD_STREAM_CHUNK_BYTES:-65536}
-      FILE_GUARD_OFFICE_MAX_ENTRIES: ${FILE_GUARD_OFFICE_MAX_ENTRIES:-200}
-      FILE_GUARD_OFFICE_MAX_TOTAL_UNCOMPRESSED_BYTES: ${FILE_GUARD_OFFICE_MAX_TOTAL_UNCOMPRESSED_BYTES:-41943040}
-      FILE_GUARD_OFFICE_MAX_ENTRY_UNCOMPRESSED_BYTES: ${FILE_GUARD_OFFICE_MAX_ENTRY_UNCOMPRESSED_BYTES:-12582912}
-      FILE_GUARD_OFFICE_MAX_COMPRESSION_RATIO: ${FILE_GUARD_OFFICE_MAX_COMPRESSION_RATIO:-120}
-      FILE_GUARD_OFFICE_MAX_XML_SCAN_BYTES: ${FILE_GUARD_OFFICE_MAX_XML_SCAN_BYTES:-1048576}
-      FILE_GUARD_OFFICE_MAX_ENTRY_NAME_LENGTH: ${FILE_GUARD_OFFICE_MAX_ENTRY_NAME_LENGTH:-255}
-      FILE_GUARD_UPLOAD_READ_CHUNK_BYTES: ${FILE_GUARD_UPLOAD_READ_CHUNK_BYTES:-1048576}
-      FILE_GUARD_IMAGE_MAX_WIDTH: ${FILE_GUARD_IMAGE_MAX_WIDTH:-12000}
-      FILE_GUARD_IMAGE_MAX_HEIGHT: ${FILE_GUARD_IMAGE_MAX_HEIGHT:-12000}
-      FILE_GUARD_IMAGE_MAX_PIXELS: ${FILE_GUARD_IMAGE_MAX_PIXELS:-40000000}
-      FILE_GUARD_CLAMAV_UPDATE_ON_START: ${FILE_GUARD_CLAMAV_UPDATE_ON_START:-true}
-      FILE_GUARD_FRESHCLAM_ATTEMPTS: ${FILE_GUARD_FRESHCLAM_ATTEMPTS:-3}
+      FILE_GUARD_PORT: ${FILE_GUARD_PORT}
+      FILE_GUARD_MAX_FILE_SIZE_BYTES: ${FILE_GUARD_MAX_FILE_SIZE_BYTES}
+      FILE_GUARD_ALLOWED_EXTENSIONS: ${FILE_GUARD_ALLOWED_EXTENSIONS}
+      FILE_GUARD_ALLOWED_MIME_TYPES: ${FILE_GUARD_ALLOWED_MIME_TYPES}
+      FILE_GUARD_STRUCTURAL_VALIDATION_ENABLED: ${FILE_GUARD_STRUCTURAL_VALIDATION_ENABLED}
+      FILE_GUARD_ALLOW_LIBMAGIC_FALLBACK: ${FILE_GUARD_ALLOW_LIBMAGIC_FALLBACK}
+      FILE_GUARD_ANTIVIRUS_ENABLED: ${FILE_GUARD_ANTIVIRUS_ENABLED}
+      FILE_GUARD_REQUIRE_ANTIVIRUS: ${FILE_GUARD_REQUIRE_ANTIVIRUS}
+      FILE_GUARD_ANTIVIRUS_TIMEOUT_SECONDS: ${FILE_GUARD_ANTIVIRUS_TIMEOUT_SECONDS}
+      FILE_GUARD_SCAN_TIMEOUT_SECONDS: ${FILE_GUARD_SCAN_TIMEOUT_SECONDS}
+      FILE_GUARD_CLAMD_SOCKET_PATH: ${FILE_GUARD_CLAMD_SOCKET_PATH}
+      FILE_GUARD_CLAMD_STREAM_CHUNK_BYTES: ${FILE_GUARD_CLAMD_STREAM_CHUNK_BYTES}
+      FILE_GUARD_OFFICE_MAX_ENTRIES: ${FILE_GUARD_OFFICE_MAX_ENTRIES}
+      FILE_GUARD_OFFICE_MAX_TOTAL_UNCOMPRESSED_BYTES: ${FILE_GUARD_OFFICE_MAX_TOTAL_UNCOMPRESSED_BYTES}
+      FILE_GUARD_OFFICE_MAX_ENTRY_UNCOMPRESSED_BYTES: ${FILE_GUARD_OFFICE_MAX_ENTRY_UNCOMPRESSED_BYTES}
+      FILE_GUARD_OFFICE_MAX_COMPRESSION_RATIO: ${FILE_GUARD_OFFICE_MAX_COMPRESSION_RATIO}
+      FILE_GUARD_OFFICE_MAX_XML_SCAN_BYTES: ${FILE_GUARD_OFFICE_MAX_XML_SCAN_BYTES}
+      FILE_GUARD_OFFICE_MAX_ENTRY_NAME_LENGTH: ${FILE_GUARD_OFFICE_MAX_ENTRY_NAME_LENGTH}
+      FILE_GUARD_UPLOAD_READ_CHUNK_BYTES: ${FILE_GUARD_UPLOAD_READ_CHUNK_BYTES}
+      FILE_GUARD_IMAGE_MAX_WIDTH: ${FILE_GUARD_IMAGE_MAX_WIDTH}
+      FILE_GUARD_IMAGE_MAX_HEIGHT: ${FILE_GUARD_IMAGE_MAX_HEIGHT}
+      FILE_GUARD_IMAGE_MAX_PIXELS: ${FILE_GUARD_IMAGE_MAX_PIXELS}
+      FILE_GUARD_CLAMAV_UPDATE_ON_START: ${FILE_GUARD_CLAMAV_UPDATE_ON_START}
+      FILE_GUARD_FRESHCLAM_ATTEMPTS: ${FILE_GUARD_FRESHCLAM_ATTEMPTS}
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/ready"]
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:${FILE_GUARD_PORT}/ready"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -93,30 +95,30 @@ services:
   backend:
     build:
       context: ./backend
-    container_name: bb-backend
+    container_name: ${BACKEND_CONTAINER_NAME}
     ports:
-      - "8000:8000"
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+      - "${BACKEND_HOST_PORT}:${APP_PORT}"
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host ${APP_HOST} --port ${APP_PORT}"
     environment:
-      APP_ENV: development
-      APP_PORT: "8000"
-      DATABASE_URL: postgresql://budgetbasket:budgetbasket@postgres:5432/budgetbasket
-      POSTGRES_DB: budgetbasket
-      POSTGRES_USER: budgetbasket
-      POSTGRES_PASSWORD: budgetbasket
-      S3_ENDPOINT: http://seaweedfs:8333
-      S3_REGION: us-east-1
-      S3_ACCESS_KEY: budgetbasket
-      S3_SECRET_KEY: budgetbasket_secret
-      S3_BUCKET: budgetbasket-files
-      S3_FORCE_PATH_STYLE: "true"
-      S3_PUBLIC_URL: http://localhost:8333
-      MAX_UPLOAD_FILE_SIZE_MB: "25"
-      ALLOWED_UPLOAD_MIME_TYPES: application/pdf,image/png,image/jpeg,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document
-      FILE_GUARD_URL: http://file_guard:8080
-      FILE_GUARD_CONNECT_TIMEOUT_SECONDS: ${FILE_GUARD_CONNECT_TIMEOUT_SECONDS:-2}
-      FILE_GUARD_READ_TIMEOUT_SECONDS: ${FILE_GUARD_READ_TIMEOUT_SECONDS:-35}
-      BUDGET_EXPORT_DIR: /tmp/budgetbasket/exports
+      APP_ENV: ${APP_ENV}
+      APP_PORT: ${APP_PORT}
+      DATABASE_URL: ${DATABASE_URL}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_REGION: ${S3_REGION}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: ${S3_BUCKET}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE}
+      S3_PUBLIC_URL: ${S3_PUBLIC_URL}
+      MAX_UPLOAD_FILE_SIZE_MB: ${MAX_UPLOAD_FILE_SIZE_MB}
+      ALLOWED_UPLOAD_MIME_TYPES: ${ALLOWED_UPLOAD_MIME_TYPES}
+      FILE_GUARD_URL: ${FILE_GUARD_URL}
+      FILE_GUARD_CONNECT_TIMEOUT_SECONDS: ${FILE_GUARD_CONNECT_TIMEOUT_SECONDS}
+      FILE_GUARD_READ_TIMEOUT_SECONDS: ${FILE_GUARD_READ_TIMEOUT_SECONDS}
+      BUDGET_EXPORT_DIR: ${BUDGET_EXPORT_DIR}
     depends_on:
       postgres:
         condition: service_healthy
@@ -132,11 +134,12 @@ services:
   frontend:
     build:
       context: ./frontend
-    container_name: bb-frontend
+    container_name: ${FRONTEND_CONTAINER_NAME}
+    command: npm run dev -- --port ${FRONTEND_PORT}
     ports:
-      - "5173:5173"
+      - "${FRONTEND_HOST_PORT}:${FRONTEND_PORT}"
     environment:
-      VITE_API_URL: http://localhost:8000
+      VITE_API_URL: ${VITE_API_URL}
     depends_on:
       - backend
     networks:

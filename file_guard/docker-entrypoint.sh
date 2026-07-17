@@ -54,7 +54,7 @@ else
 fi
 
 echo "[file_guard] Запускаем FastAPI-сервис проверки файлов"
-uvicorn app.main:app --host 0.0.0.0 --port 8080 &
+uvicorn app.main:app --host 0.0.0.0 --port "${FILE_GUARD_PORT:-8080}" &
 UVICORN_PID="$!"
 
 exit_code=0
