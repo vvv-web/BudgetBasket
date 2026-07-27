@@ -136,11 +136,10 @@ class CatalogService:
             allowed["unit_id"] = self.department_id_for_unit(allowed["unit_id"])
         merged = {**current, **allowed}
         merged["unit_id"] = merged.get("unit_id") or self._default_department_id()
-        references_collection = "dds_items" if collection == "dds_catalog" else "invest_items"
         reference_field = "dds_id" if collection == "dds_catalog" else "invest_id"
         is_used = any(
-            item.get(reference_field) == item_id or item.get("category_id") == item_id
-            for item in self.repo.load_all(references_collection)
+            item.get(reference_field) == item_id
+            for item in self.repo.load_all("req_items")
         )
         if is_used and (
             not self._same_id(current.get("parent_id"), merged.get("parent_id"))
@@ -166,28 +165,11 @@ class CatalogService:
         if not target:
             raise HTTPException(status_code=404, detail="Запись не найдена")
 
-        references_collection = "dds_items" if collection == "dds_catalog" else "invest_items"
         reference_field = "dds_id" if collection == "dds_catalog" else "invest_id"
-        if any(item.get(reference_field) == item_id or item.get("category_id") == item_id for item in self.repo.load_all(references_collection)):
+        if any(item.get(reference_field) == item_id for item in self.repo.load_all("req_items")):
             raise HTTPException(status_code=400, detail="Нельзя удалить запись, пока она используется в заявках")
 
         if any(item.get("parent_id") == item_id for item in self.repo.load_all(collection)):
             raise HTTPException(status_code=400, detail="Нельзя удалить категорию, пока в ней есть статьи. Сначала перенесите статьи в другую категорию")
 
         self.repo.delete(collection, item_id)
-
-    def list_mappings(self, collection: str) -> list[dict]:
-        return self.repo.load_all(collection)
-
-    def create_mapping(self, user: dict, collection: str, payload: dict) -> dict:
-        require_role(user, "admin")
-        key = "dds_id" if collection == "unit_dds_mappings" else "invest_id"
-        if payload.get("is_active"):
-            for item in self.repo.load_all(collection):
-                if item.get("unit_id") == payload.get("unit_id") and item.get(key) == payload.get(key) and item.get("is_active"):
-                    self.repo.update(collection, item["id"], {"is_active": False})
-        return self.repo.create(collection, payload)
-
-    def update_mapping(self, user: dict, collection: str, item_id: str, patch: dict) -> dict:
-        require_role(user, "admin")
-        return self.repo.update(collection, item_id, patch)

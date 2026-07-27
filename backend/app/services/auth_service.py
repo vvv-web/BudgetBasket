@@ -24,7 +24,7 @@ class AuthService:
     def login(self, login: str, password: str) -> dict:
         user = next((item for item in self.repo.load_all("users") if item["login"] == login), None)
         if not user or not verify_password(password, user.get("password", "")):
-            raise HTTPException(status_code=401, detail="Invalid login or password")
+            raise HTTPException(status_code=401, detail="Неверный логин или пароль")
         if needs_rehash(user.get("password", "")):
             self.repo.update("users", user["id"], {"password": hash_password(password)})
         token = f"mock-{uuid4()}"
@@ -33,8 +33,8 @@ class AuthService:
 
     def me(self, token: str | None) -> dict:
         if not token or token not in self.tokens:
-            raise HTTPException(status_code=401, detail="Authorization required")
+            raise HTTPException(status_code=401, detail="Требуется авторизация")
         user = self.repo.get_by_id("users", self.tokens[token])
         if not user:
-            raise HTTPException(status_code=401, detail="User not found")
+            raise HTTPException(status_code=401, detail="Пользователь не найден")
         return {**public_user(user), "unit_ids": self._direct_unit_ids(user["id"])}

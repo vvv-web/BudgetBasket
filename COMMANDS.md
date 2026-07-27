@@ -47,6 +47,13 @@ docker compose exec backend alembic current
 docker compose exec backend alembic upgrade head
 ```
 
+Data migrations are not started with the application. Run them deliberately after a backup:
+
+```powershell
+docker compose exec backend alembic -c alembic-data.ini current
+docker compose exec backend alembic -c alembic-data.ini upgrade head
+```
+
 ## Тесты и сборка
 
 Все тесты одной командой:

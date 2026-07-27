@@ -51,6 +51,7 @@ services:
       postgres:
         condition: service_healthy
     networks:
+      - app
       - data
 
   file_guard:

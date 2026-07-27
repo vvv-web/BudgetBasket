@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import hashlib
 import mimetypes
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile
@@ -13,64 +16,46 @@ from app.services.file_guard_client import FileGuardClient, require_valid_file
 from app.services.permission_service import PermissionService
 from app.storage import LocalObjectStorage, S3ObjectStorage
 
+if TYPE_CHECKING:
+    from app.services.request_service import RequestService
+
 
 SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 class FileService:
-    def __init__(
-        self,
-        repo: Repository,
-        permissions: PermissionService,
-        upload_dir: str | Path,
-        settings: Settings,
-        file_guard: FileGuardClient,
-        object_storage: LocalObjectStorage | S3ObjectStorage | None = None,
-    ):
+    def __init__(self, repo: Repository, permissions: PermissionService, upload_dir: str | Path, settings: Settings, file_guard: FileGuardClient, object_storage: LocalObjectStorage | S3ObjectStorage | None = None, request_service: RequestService | None = None):
         self.repo = repo
         self.permissions = permissions
         self.settings = settings
         self.file_guard = file_guard
-        self.object_storage = object_storage or (
-            S3ObjectStorage(settings) if settings.use_s3 else LocalObjectStorage(upload_dir)
-        )
+        self.object_storage = object_storage or (S3ObjectStorage(settings) if settings.use_s3 else LocalObjectStorage(upload_dir))
+        self.request_service = request_service
 
     def ensure_bucket(self) -> None:
         self.object_storage.ensure_bucket()
 
     @staticmethod
     def safe_original_name(original_name: str) -> str:
-        cleaned = SAFE_NAME_RE.sub("_", original_name.strip()).strip("._")
-        return cleaned or "file"
+        return SAFE_NAME_RE.sub("_", original_name.strip()).strip("._") or "file"
 
     def storage_key(self, original_name: str) -> str:
-        return f"budget-items/{uuid4()}-{self.safe_original_name(original_name)}"
+        return f"request-items/{uuid4()}-{self.safe_original_name(original_name)}"
 
     def _allowed_mime(self, original_name: str, content_type: str | None) -> str:
-        expected_mime, _ = mimetypes.guess_type(original_name)
-        actual_mime = (content_type or expected_mime or "application/octet-stream").split(";")[0]
-        if actual_mime not in self.settings.allowed_upload_mime_types:
-            raise HTTPException(status_code=400, detail="Тип файла не поддерживается")
-        if expected_mime and actual_mime != expected_mime:
-            raise HTTPException(status_code=400, detail="Тип содержимого файла не соответствует его расширению")
-        return actual_mime
+        expected, _ = mimetypes.guess_type(original_name)
+        actual = (content_type or expected or "application/octet-stream").split(";")[0]
+        if actual not in self.settings.allowed_upload_mime_types:
+            raise HTTPException(status_code=400, detail="Неподдерживаемый тип файла")
+        if expected and actual != expected:
+            raise HTTPException(status_code=400, detail="Содержимое файла не соответствует его расширению")
+        return actual
 
     def _validate_content(self, content: bytes) -> None:
         if not content:
-            raise HTTPException(status_code=400, detail="Пустые файлы не допускаются")
-        max_size = self.settings.max_upload_file_size_mb * 1024 * 1024
-        if len(content) > max_size:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Размер файла превышает {self.settings.max_upload_file_size_mb} МБ",
-            )
-
-    def _create_storage_object(self, storage_payload: dict) -> dict:
-        return self.repo.create("storage_objects", storage_payload)
-
-    def _create_file(self, storage_id: int, original_name: str) -> dict:
-        payload = {"id_storage_object": storage_id, "original_name": original_name}
-        return self.repo.create("files", payload)
+            raise HTTPException(status_code=400, detail="Нельзя прикрепить пустой файл")
+        if len(content) > self.settings.max_upload_file_size_mb * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Файл превышает допустимый размер")
 
     async def _upload(self, upload: UploadFile) -> dict:
         validation = await require_valid_file(self.file_guard, upload)
@@ -79,68 +64,61 @@ class FileService:
         self._validate_content(content)
         mime_type = self._allowed_mime(original_name, validation.detected_mime_type)
         digest = hashlib.sha256(content).hexdigest()
-        storage = next((item for item in self.repo.load_all("storage_objects") if item["content_sha256"] == digest), None)
+        storage = next((entry for entry in self.repo.load_all("storage_objects") if entry["content_sha256"] == digest), None)
         if not storage:
-            storage_key = self.storage_key(original_name)
-            self.object_storage.put_object(storage_key, content, mime_type)
-            storage = self._create_storage_object(
-                {
-                    "storage_bucket": self.settings.s3_bucket if self.settings.use_s3 else "local",
-                    "storage_key": storage_key,
-                    "content_sha256": digest,
-                    "mime_type": mime_type,
-                    "size_bytes": len(content),
-                }
-            )
-        return self._create_file(storage["id"], original_name)
+            key = self.storage_key(original_name)
+            self.object_storage.put_object(key, content, mime_type)
+            storage = self.repo.create("storage_objects", {"storage_bucket": self.settings.s3_bucket if self.settings.use_s3 else "local", "storage_key": key, "content_sha256": digest, "mime_type": mime_type, "size_bytes": len(content)})
+        return self.repo.create("files", {"id_storage_object": storage["id"], "original_name": original_name})
 
-    async def upload_for_item(self, user: dict, kind: str, item_id: str, upload: UploadFile) -> dict:
-        collection = "dds_items" if kind == "dds" else "invest_items"
-        item = get_required(self.repo, collection, item_id)
-        budget_request = get_required(self.repo, "requests", item["request_id"])
-        self.permissions.require_employee_upload_file(user, budget_request)
+    def _item_and_request(self, item_id: str) -> tuple[dict, dict]:
+        item = get_required(self.repo, "req_items", item_id)
+        return item, get_required(self.repo, "requests", item["request_id"])
+
+    async def upload_for_item(self, user: dict, item_id: str, upload: UploadFile) -> dict:
+        item, request = self._item_and_request(item_id)
+        self.permissions.require_employee_upload_file(user, request)
         file = await self._upload(upload)
-        self._link_uploaded_file(user, kind, item_id, file["id"])
+        self._link_uploaded_file(user, item_id, file["id"])
+        if self.request_service:
+            self.request_service.log(
+                user,
+                request["id"],
+                "file_attached",
+                entity="file",
+                entity_id=str(file["id"]),
+                after={"name": file["original_name"], "item_id": item["id"]},
+            )
         return file
 
-    def _link_uploaded_file(self, user: dict, kind: str, item_id: str, file_id: str | int) -> dict:
-        collection = "dds_items" if kind == "dds" else "invest_items"
-        item = get_required(self.repo, collection, item_id)
-        budget_request = get_required(self.repo, "requests", item["request_id"])
-        self.permissions.require_employee_upload_file(user, budget_request)
+    def _link_uploaded_file(self, user: dict, item_id: str, file_id: str | int) -> dict:
+        _item, request = self._item_and_request(item_id)
+        self.permissions.require_employee_upload_file(user, request)
         get_required(self.repo, "files", file_id)
-        link_collection = "dds_item_files" if kind == "dds" else "invest_item_files"
-        key = "dds_item_id" if kind == "dds" else "invest_item_id"
         file_id = int(file_id) if str(file_id).isdigit() else file_id
-        if any(link.get("file_id") == file_id and link.get(key) == item_id for link in self.repo.load_all(link_collection)):
-            raise HTTPException(status_code=400, detail="Файл уже прикреплён к позиции")
-        link = {"file_id": file_id, key: item_id}
-        return self.repo.insert(link_collection, link)
+        if any(link.get("file_id") == file_id and link.get("req_item_id") == item_id for link in self.repo.load_all("req_item_files")):
+            raise HTTPException(status_code=400, detail="Файл уже прикреплён")
+        return self.repo.insert("req_item_files", {"file_id": file_id, "req_item_id": item_id})
 
-    def delete_link(self, user: dict, kind: str, item_id: str, file_id: str | int) -> None:
-        collection = "dds_items" if kind == "dds" else "invest_items"
-        item = get_required(self.repo, collection, item_id)
-        budget_request = get_required(self.repo, "requests", item["request_id"])
-        self.permissions.require_request_unfrozen(budget_request)
-        self.permissions.require_employee_upload_file(user, budget_request)
-
-        link_collection = "dds_item_files" if kind == "dds" else "invest_item_files"
-        key = "dds_item_id" if kind == "dds" else "invest_item_id"
+    def delete_link(self, user: dict, item_id: str, file_id: str | int) -> None:
+        item, request = self._item_and_request(item_id)
+        self.permissions.require_request_unfrozen(request)
+        self.permissions.require_employee_upload_file(user, request)
         file_id = int(file_id) if str(file_id).isdigit() else file_id
-        deleted = self.repo.delete_where(link_collection, {key: item_id, "file_id": file_id})
-        if not deleted:
-            raise HTTPException(status_code=404, detail="Связь с файлом не найдена")
-
-        remaining_links = [
-            link
-            for collection_name in ("dds_item_files", "invest_item_files")
-            for link in self.repo.load_all(collection_name)
-            if link.get("file_id") == file_id
-        ]
-        if remaining_links:
-            return
-
+        if not self.repo.delete_where("req_item_files", {"req_item_id": item_id, "file_id": file_id}):
+            raise HTTPException(status_code=404, detail="Вложение не найдено")
         file = get_required(self.repo, "files", file_id)
+        if self.request_service:
+            self.request_service.log(
+                user,
+                request["id"],
+                "file_deleted",
+                entity="file",
+                entity_id=str(file_id),
+                before={"name": file["original_name"], "item_id": item["id"]},
+            )
+        if any(link.get("file_id") == file_id for link in self.repo.load_all("req_item_files")):
+            return
         storage_id = file["id_storage_object"]
         self.repo.delete("files", file_id)
         if not any(entry.get("id_storage_object") == storage_id for entry in self.repo.load_all("files")):
@@ -154,36 +132,25 @@ class FileService:
     def _request_for_file(self, file_id: str | int) -> list[dict]:
         file_id = int(file_id) if str(file_id).isdigit() else file_id
         requests = []
-        for link in self.repo.load_all("dds_item_files"):
+        for link in self.repo.load_all("req_item_files"):
             if link.get("file_id") == file_id:
-                item = self.repo.get_by_id("dds_items", link["dds_item_id"])
-                if item:
-                    requests.append(get_required(self.repo, "requests", item["request_id"]))
-        for link in self.repo.load_all("invest_item_files"):
-            if link.get("file_id") == file_id:
-                item = self.repo.get_by_id("invest_items", link["invest_item_id"])
+                item = self.repo.get_by_id("req_items", link["req_item_id"])
                 if item:
                     requests.append(get_required(self.repo, "requests", item["request_id"]))
         return requests
 
     def require_file_access(self, user: dict, file_id: str | int) -> None:
-        linked_requests = self._request_for_file(file_id)
+        linked = self._request_for_file(file_id)
         if user["role"] == "admin":
             return
-        if not linked_requests:
-            raise HTTPException(status_code=403, detail="Нет доступа к непривязанному файлу")
-        if not any(self.permissions.can_view_request(user, budget_request) for budget_request in linked_requests):
-            raise HTTPException(status_code=403, detail="Нет доступа к файлу")
+        if not linked or not any(self.permissions.can_view_request(user, request) for request in linked):
+            raise HTTPException(status_code=403, detail="Нет доступа к этому файлу")
 
-    def files_for_item(self, user: dict, kind: str, item_id: str) -> list[dict]:
-        collection = "dds_items" if kind == "dds" else "invest_items"
-        item = get_required(self.repo, collection, item_id)
-        budget_request = get_required(self.repo, "requests", item["request_id"])
-        self.permissions.require_view_request(user, budget_request)
-        link_collection = "dds_item_files" if kind == "dds" else "invest_item_files"
-        key = "dds_item_id" if kind == "dds" else "invest_item_id"
-        file_ids = {link["file_id"] for link in self.repo.load_all(link_collection) if link.get(key) == item_id}
-        return [file for file in self.repo.load_all("files") if file["id"] in file_ids]
+    def files_for_item(self, user: dict, item_id: str) -> list[dict]:
+        _item, request = self._item_and_request(item_id)
+        self.permissions.require_view_request(user, request)
+        ids = {link["file_id"] for link in self.repo.load_all("req_item_files") if link.get("req_item_id") == item_id}
+        return [file for file in self.repo.load_all("files") if file["id"] in ids]
 
     def download(self, user: dict, file_id: str | int):
         file = get_required(self.repo, "files", file_id)
@@ -196,5 +163,5 @@ class FileService:
         body, file, storage, _size, _content_type = self.download(user, file_id)
         path = getattr(body, "name", None)
         if not path:
-            raise HTTPException(status_code=400, detail="Файл не хранится в локальной файловой системе")
+            raise HTTPException(status_code=400, detail="Файл не хранится локально")
         return Path(path), file

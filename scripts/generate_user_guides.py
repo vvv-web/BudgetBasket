@@ -121,7 +121,38 @@ def add_status_table(document: Document) -> None:
         cells[1].text = meaning
 
 
-def create_guide(role: str, sections: list[tuple[str, list[str]]], target: Path) -> None:
+def add_roles_table(document: Document) -> None:
+    document.add_heading("Назначение ролей", level=1)
+    table = document.add_table(rows=1, cols=3)
+    table.style = "Table Grid"
+    table.rows[0].cells[0].text = "Роль"
+    table.rows[0].cells[1].text = "Назначение"
+    table.rows[0].cells[2].text = "Основные возможности"
+    rows = [
+        (
+            "Администратор",
+            "Настраивает систему и обеспечивает готовность данных для бюджетного процесса.",
+            "Управляет пользователями, оргструктурой и НСИ; видит все заявки, сводку и экспорт.",
+        ),
+        (
+            "Экономист",
+            "Проверяет и утверждает бюджетные потребности закреплённых модулей.",
+            "Рассматривает строки, указывает фактические суммы и комментарии, завершает проверку, возвращает заявку на рассмотрение и фиксирует бюджет.",
+        ),
+        (
+            "Сотрудник",
+            "Готовит бюджетные заявки по назначенным подразделениям.",
+            "Создаёт черновики, добавляет строки и вложения, отправляет заявку, отзывает её для доработки и знакомится с итогом проверки.",
+        ),
+    ]
+    for role, purpose, permissions in rows:
+        cells = table.add_row().cells
+        cells[0].text = role
+        cells[1].text = purpose
+        cells[2].text = permissions
+
+
+def create_guide(target: Path) -> None:
     document = Document()
     document.sections[0].top_margin = Cm(1.7)
     document.sections[0].bottom_margin = Cm(1.7)
@@ -129,20 +160,24 @@ def create_guide(role: str, sections: list[tuple[str, list[str]]], target: Path)
     normal.font.name = "Arial"
     normal.font.size = Pt(10)
 
-    title = document.add_heading(f"Руководство пользователя BudgetBasket — {role}", 0)
+    title = document.add_heading("Руководство пользователя BudgetBasket", 0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    document.add_paragraph("Версия 1.1 · 16 июля 2026 года")
-    document.add_paragraph("Документ описывает доступные функции, страницы и порядок действий для указанной роли.")
+    document.add_paragraph("Версия 1.2 · 17 июля 2026 года")
+    document.add_paragraph("Единое руководство для администратора, экономиста и сотрудника.")
 
     for heading, items in COMMON_SECTIONS:
         document.add_heading(heading, level=1)
         add_bullets(document, items)
 
+    add_roles_table(document)
     add_status_table(document)
 
-    for heading, items in sections:
-        document.add_heading(heading, level=1)
-        add_bullets(document, items)
+    for role, sections in ROLE_SECTIONS.items():
+        document.add_page_break()
+        document.add_heading(f"Работа в роли: {role}", level=1)
+        for heading, items in sections:
+            document.add_heading(heading.split(". ", 1)[-1], level=2)
+            add_bullets(document, items)
 
     document.add_heading("Практическая рекомендация", level=1)
     document.add_paragraph(
@@ -155,8 +190,9 @@ def create_guide(role: str, sections: list[tuple[str, list[str]]], target: Path)
 def main() -> None:
     output_dir = Path(__file__).resolve().parents[1] / "docs" / "user-guides"
     output_dir.mkdir(parents=True, exist_ok=True)
-    for role, sections in ROLE_SECTIONS.items():
-        create_guide(role, sections, output_dir / f"BudgetBasket_User_Guide_{role}.docx")
+    for old_guide in output_dir.glob("BudgetBasket_User_Guide_*.docx"):
+        old_guide.unlink()
+    create_guide(output_dir / "BudgetBasket_User_Guide.docx")
 
 
 if __name__ == "__main__":

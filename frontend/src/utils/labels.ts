@@ -4,7 +4,17 @@ export const roleLabels: Record<Role, string> = {
   admin: 'Администратор',
   economist: 'Экономист',
   employee: 'Сотрудник',
+  approver: 'Согласующий',
+  zgd: 'ЗГД',
 };
+
+export const stepStatusLabels = {
+  waiting: 'Ожидает согласования предыдущих этапов',
+  on_approval: 'На согласовании',
+  on_revision: 'На доработке',
+  approved: 'Согласован',
+  closed: 'Закрыт',
+} as const;
 
 export const requestStatusLabels: Record<RequestStatus, string> = {
   draft: 'Черновик',
@@ -21,6 +31,7 @@ export const itemStatusLabels: Record<ItemStatus, string> = {
   rejected: 'Отказано',
   approved_with_changes: 'Утверждено с изменениями',
   approved: 'Утверждено',
+  deleted: 'Удалено',
 };
 
 export function money(value: number | null | undefined): string {

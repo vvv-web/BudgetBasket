@@ -1,7 +1,11 @@
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import CloseIcon from '@mui/icons-material/Close';
 import DashboardIcon from '@mui/icons-material/Dashboard';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import FolderIcon from '@mui/icons-material/Folder';
+import ForumOutlinedIcon from '@mui/icons-material/ForumOutlined';
+import FactCheckIcon from '@mui/icons-material/FactCheck';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import LogoutIcon from '@mui/icons-material/Logout';
 import MenuIcon from '@mui/icons-material/Menu';
@@ -9,9 +13,13 @@ import MenuOpenIcon from '@mui/icons-material/MenuOpen';
 import MenuBookIcon from '@mui/icons-material/MenuBook';
 import PeopleIcon from '@mui/icons-material/People';
 import SchemaIcon from '@mui/icons-material/Schema';
+import SpaceDashboardIcon from '@mui/icons-material/SpaceDashboard';
+import TableChartIcon from '@mui/icons-material/TableChart';
 import Alert from '@mui/material/Alert';
+import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import Collapse from '@mui/material/Collapse';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
@@ -23,6 +31,8 @@ import List from '@mui/material/List';
 import ListItemButton from '@mui/material/ListItemButton';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
+import Menu from '@mui/material/Menu';
+import MenuItem from '@mui/material/MenuItem';
 import Snackbar from '@mui/material/Snackbar';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
@@ -35,10 +45,14 @@ import axios from 'axios';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
+import { chatNotificationsWebSocketUrl } from '../api/websocket';
 import type { Profile, User } from '../types';
 import { roleLabels } from '../utils/labels';
+import { canAccessApproval } from '../utils/roles';
+import { AUTH_TOKEN_KEY } from '../utils/session';
 import { EMAIL_RE, PHONE_RE, formatPhone, lettersOnly } from '../utils/validation';
 import { AppBreadcrumbs, breadcrumblessPaths } from './AppBreadcrumbs';
+import { ChatInboxDrawer } from './ChatInboxDrawer';
 import { UserGuideDialog } from './UserGuideDialog';
 
 const expandedDrawerWidth = 280;
@@ -121,6 +135,9 @@ export function Layout({
   const [toast, setToast] = useState<{ message: string; severity: ToastSeverity; key: number } | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [chatInboxOpen, setChatInboxOpen] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(true);
+  const [summaryMenuAnchor, setSummaryMenuAnchor] = useState<HTMLElement | null>(null);
   const [profileForm, setProfileForm] = useState<ProfileDraft>(emptyProfile);
   const showPageChrome = isMobile || !breadcrumblessPaths.has(location.pathname) || !!actions || !!leading;
   const chrome = useMemo(() => ({ setActions, setLeading }), []);
@@ -128,6 +145,48 @@ export function Layout({
     setToast({ message, severity, key: Date.now() });
   }, []);
   const toastCtx = useMemo(() => ({ showToast }), [showToast]);
+  const canUseChat = user.role === 'employee' || user.role === 'economist';
+
+  useEffect(() => {
+    const token = localStorage.getItem(AUTH_TOKEN_KEY);
+    if (!canUseChat || !token) return;
+
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | undefined;
+    let disposed = false;
+    let reconnectDelay = 1_000;
+
+    const connect = () => {
+      socket = new WebSocket(chatNotificationsWebSocketUrl(token));
+      socket.onopen = () => {
+        reconnectDelay = 1_000;
+        queryClient.invalidateQueries({ queryKey: ['chats'] });
+      };
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data) as { type?: string; request_id?: string };
+          if (payload.type !== 'chat.message.created' || !payload.request_id) return;
+          queryClient.invalidateQueries({ queryKey: ['chats'] });
+          queryClient.invalidateQueries({ queryKey: ['request-details', payload.request_id, 'chat'] });
+          showToast(`Новое сообщение по заявке ${payload.request_id.slice(0, 8)}`, 'info');
+        } catch {
+          // Ignore malformed websocket events and wait for the next message.
+        }
+      };
+      socket.onclose = () => {
+        if (disposed) return;
+        reconnectTimer = window.setTimeout(connect, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, 30_000);
+      };
+    };
+
+    connect();
+    return () => {
+      disposed = true;
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      socket?.close();
+    };
+  }, [canUseChat, queryClient, showToast]);
 
   useEffect(() => {
     setActions(null);
@@ -148,6 +207,12 @@ export function Layout({
     },
     retry: false,
   });
+  const { data: chats = [] } = useQuery<{ unread_count: number }[]>({
+    queryKey: ['chats'],
+    queryFn: async () => (await api.get('/chats')).data,
+    enabled: canUseChat,
+  });
+  const unreadChatsCount = useMemo(() => chats.reduce((total, chat) => total + chat.unread_count, 0), [chats]);
 
   useEffect(() => {
     if (!profile) return;
@@ -178,7 +243,10 @@ export function Layout({
     },
     onError: (error) => {
       const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      showToast(detail || (error instanceof Error ? error.message : 'Не удалось сохранить профиль'), 'error');
+      showToast(
+        detail || (error instanceof Error && error.message === 'Network Error' ? 'Не удалось подключиться к серверу' : error instanceof Error ? error.message : 'Не удалось сохранить профиль'),
+        'error',
+      );
     },
   });
 
@@ -188,8 +256,14 @@ export function Layout({
     (!!profileForm.phone && !PHONE_RE.test(profileForm.phone));
 
   const items = [
-    ...(user.role !== 'employee' ? [{ label: 'Сводка', to: '/', icon: <DashboardIcon /> }] : []),
     { label: 'Заявки', to: '/requests', icon: <FolderIcon /> },
+    ...(canAccessApproval(user.role)
+      ? [{
+          label: 'Маршрут согласования',
+          to: '/approval',
+          icon: <FactCheckIcon />,
+        }]
+      : []),
     ...(user.role === 'admin'
       ? [
           { label: 'Пользователи', to: '/users', icon: <PeopleIcon /> },
@@ -198,10 +272,16 @@ export function Layout({
         ]
       : []),
   ];
+  const summaryItems = [
+    { label: 'Дашборд', view: 'dashboard', icon: <SpaceDashboardIcon fontSize="small" /> },
+    { label: 'Табличный вид', view: 'table', icon: <TableChartIcon fontSize="small" /> },
+  ];
   const drawerCollapsed = !isMobile && desktopDrawerCollapsed;
   const drawerWidth = drawerCollapsed ? collapsedDrawerWidth : expandedDrawerWidth;
+  const summaryMenuOpen = Boolean(summaryMenuAnchor);
 
   const toggleDesktopDrawer = () => {
+    setSummaryMenuAnchor(null);
     setDesktopDrawerCollapsed((current) => {
       window.localStorage.setItem('budgetbasket:drawer-collapsed', String(!current));
       return !current;
@@ -243,7 +323,7 @@ export function Layout({
                   BudgetBasket
                 </Typography>
                 <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: 12 }}>
-                  Бюджетирование модулей
+                  Бюджетирование объединений
                 </Typography>
               </Box>}
               <IconButton
@@ -259,6 +339,79 @@ export function Layout({
         </Box>
         <Divider />
         <List>
+          {user.role !== 'employee' && (
+            <>
+              <Tooltip title="Сводка" placement="right" enterDelay={150} disableHoverListener={!drawerCollapsed}>
+                <ListItemButton
+                  className="drawer-nav-item"
+                  selected={location.pathname === '/'}
+                  onClick={(event) => {
+                    if (drawerCollapsed) {
+                      setSummaryMenuAnchor(event.currentTarget);
+                    } else {
+                      setSummaryOpen((current) => !current);
+                    }
+                  }}
+                  aria-haspopup={drawerCollapsed ? 'menu' : undefined}
+                  aria-expanded={drawerCollapsed ? summaryMenuOpen : summaryOpen}
+                >
+                  <ListItemIcon><DashboardIcon /></ListItemIcon>
+                  {!drawerCollapsed && <ListItemText primary="Сводка" />}
+                  {!drawerCollapsed && (summaryOpen ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />)}
+                </ListItemButton>
+              </Tooltip>
+              <Collapse in={summaryOpen && !drawerCollapsed} timeout="auto" unmountOnExit>
+                <List component="div" disablePadding>
+                  {summaryItems.map((summaryItem) => {
+                    const selected = location.pathname === '/' && (summaryItem.view === 'table' ? new URLSearchParams(location.search).get('view') === 'table' : new URLSearchParams(location.search).get('view') !== 'table');
+                    return (
+                      <Tooltip key={summaryItem.view} title={summaryItem.label} placement="right" enterDelay={150} disableHoverListener={!drawerCollapsed}>
+                        <ListItemButton
+                          className="drawer-nav-item"
+                          selected={selected}
+                          onClick={() => {
+                            navigate(`/?view=${summaryItem.view}`);
+                            setMobileDrawerOpen(false);
+                          }}
+                          sx={{ pl: drawerCollapsed ? undefined : 4.5 }}
+                        >
+                          <ListItemIcon sx={{ minWidth: 36 }}>{summaryItem.icon}</ListItemIcon>
+                          {!drawerCollapsed && <ListItemText primary={summaryItem.label} />}
+                        </ListItemButton>
+                      </Tooltip>
+                    );
+                  })}
+                </List>
+              </Collapse>
+              <Menu
+                open={drawerCollapsed && summaryMenuOpen}
+                anchorEl={summaryMenuAnchor}
+                onClose={() => setSummaryMenuAnchor(null)}
+                anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+                transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+                className="drawer-summary-popup"
+                MenuListProps={{ 'aria-label': 'Разделы сводки' }}
+              >
+                {summaryItems.map((summaryItem) => {
+                  const selected = location.pathname === '/' && (summaryItem.view === 'table' ? new URLSearchParams(location.search).get('view') === 'table' : new URLSearchParams(location.search).get('view') !== 'table');
+                  return (
+                    <MenuItem
+                      key={summaryItem.view}
+                      selected={selected}
+                      onClick={() => {
+                        navigate(`/?view=${summaryItem.view}`);
+                        setSummaryMenuAnchor(null);
+                        setMobileDrawerOpen(false);
+                      }}
+                    >
+                      <ListItemIcon>{summaryItem.icon}</ListItemIcon>
+                      {summaryItem.label}
+                    </MenuItem>
+                  );
+                })}
+              </Menu>
+            </>
+          )}
           {items.map((item) => {
             const selected = item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to);
             return (
@@ -337,8 +490,22 @@ export function Layout({
       </Drawer>
 
       <UserGuideDialog role={user.role} open={guideOpen} onClose={() => setGuideOpen(false)} />
+      {canUseChat && (
+        <>
+          <Box className="global-chat-launcher">
+            <Tooltip title={unreadChatsCount ? `Непрочитанные сообщения: ${unreadChatsCount}` : 'Открыть чаты'}>
+              <IconButton className="global-chat-launcher-button" onClick={() => setChatInboxOpen(true)} aria-label="Открыть чаты">
+                <Badge badgeContent={unreadChatsCount} color="primary" overlap="circular" invisible={unreadChatsCount === 0} max={99}>
+                  <ForumOutlinedIcon />
+                </Badge>
+              </IconButton>
+            </Tooltip>
+          </Box>
+          <ChatInboxDrawer open={chatInboxOpen} onClose={() => setChatInboxOpen(false)} />
+        </>
+      )}
 
-      <Dialog open={profileOpen} onClose={() => setProfileOpen(false)} fullWidth maxWidth="sm" className="profile-dialog">
+      <Dialog open={profileOpen} onClose={() => setProfileOpen(false)} fullWidth maxWidth="sm" fullScreen={isMobile} className="profile-dialog">
         <DialogTitle sx={{ pr: 6, pb: 1.5 }}>
           Профиль сотрудника
           <IconButton onClick={() => setProfileOpen(false)} sx={{ position: 'absolute', right: 12, top: 12 }}>
@@ -393,12 +560,12 @@ export function Layout({
               </Typography>
               <Stack spacing={1.75}>
                 <TextField
-                  label="Email"
+                  label="Электронная почта"
                   type="email"
                   value={profileForm.email}
                   onChange={(event) => setProfileForm((prev) => ({ ...prev, email: event.target.value }))}
                   error={!!profileForm.email && !EMAIL_RE.test(profileForm.email)}
-                  helperText={profileForm.email && !EMAIL_RE.test(profileForm.email) ? 'Введите email в формате name@example.ru' : undefined}
+                  helperText={profileForm.email && !EMAIL_RE.test(profileForm.email) ? 'Введите адрес в формате name@example.ru' : undefined}
                   fullWidth
                 />
                 <TextField
@@ -465,7 +632,8 @@ export function Layout({
           key={toast?.key}
           open={!!toast}
           autoHideDuration={3500}
-          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          anchorOrigin={{ vertical: 'bottom', horizontal: isMobile ? 'center' : 'right' }}
+          sx={isMobile ? { bottom: { xs: 88 } } : undefined}
           onClose={(_, reason) => {
             if (reason === 'clickaway') return;
             setToast(null);

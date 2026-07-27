@@ -69,28 +69,44 @@ export const theme = createTheme({
         disableElevation: true,
       },
       styleOverrides: {
-        root: {
+        root: ({ theme }) => ({
           borderRadius: 12,
           height: 42,
           minHeight: 42,
           minWidth: 132,
           paddingInline: 18,
           whiteSpace: 'nowrap',
-        },
-        sizeSmall: {
+          [theme.breakpoints.down('sm')]: {
+            minWidth: 0,
+            height: 40,
+            minHeight: 40,
+            paddingInline: 14,
+          },
+        }),
+        sizeSmall: ({ theme }) => ({
           height: 36,
           minHeight: 36,
           minWidth: 96,
           paddingInline: 12,
           borderRadius: 10,
-        },
-        sizeLarge: {
+          [theme.breakpoints.down('sm')]: {
+            minWidth: 0,
+            paddingInline: 10,
+          },
+        }),
+        sizeLarge: ({ theme }) => ({
           height: 46,
           minHeight: 46,
           minWidth: 148,
           paddingInline: 20,
           borderRadius: 12,
-        },
+          [theme.breakpoints.down('sm')]: {
+            minWidth: 0,
+            height: 44,
+            minHeight: 44,
+            paddingInline: 16,
+          },
+        }),
         containedPrimary: {
           backgroundColor: primary.main,
           color: primary.contrastText,
@@ -109,6 +125,17 @@ export const theme = createTheme({
             backgroundColor: '#F9FAFB',
           },
         },
+      },
+    },
+    MuiDialog: {
+      styleOverrides: {
+        paper: ({ theme }) => ({
+          [theme.breakpoints.down('sm')]: {
+            margin: 12,
+            width: 'calc(100% - 24px)',
+            maxHeight: 'calc(100% - 24px)',
+          },
+        }),
       },
     },
     MuiPaper: {
@@ -180,6 +207,10 @@ export const theme = createTheme({
       },
     },
     MuiTabs: {
+      defaultProps: {
+        variant: 'scrollable',
+        allowScrollButtonsMobile: true,
+      },
       styleOverrides: {
         indicator: {
           height: 3,

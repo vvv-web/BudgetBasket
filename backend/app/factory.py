@@ -15,9 +15,12 @@ from app.repositories.sql_repository import SqlRepository
 from app.routers import router
 from app.seed import seed_data
 from app.services import (
+    ApprovalService,
     AuthService,
     BudgetItemService,
     CatalogService,
+    ChatConnectionManager,
+    ChatService,
     ExcelService,
     FileService,
     PermissionService,
@@ -48,6 +51,9 @@ def create_app(*, repository: Repository | None = None, settings: Settings | Non
 
     permissions = PermissionService(repository)
     request_service = RequestService(repository, permissions)
+    chat_service = ChatService(repository, permissions, request_service)
+    approval_service = ApprovalService(repository, permissions, chat_service)
+    request_service.approval_service = approval_service
     file_guard = FileGuardClient(settings)
 
     app.state.repo = repository
@@ -58,9 +64,12 @@ def create_app(*, repository: Repository | None = None, settings: Settings | Non
     app.state.unit_service = UnitService(repository)
     app.state.catalog_service = CatalogService(repository)
     app.state.request_service = request_service
+    app.state.approval_service = approval_service
     app.state.budget_item_service = BudgetItemService(repository, permissions, request_service)
+    app.state.chat_service = chat_service
+    app.state.chat_connections = ChatConnectionManager()
     app.state.file_guard_client = file_guard
-    app.state.file_service = FileService(repository, permissions, upload_dir, settings, file_guard)
+    app.state.file_service = FileService(repository, permissions, upload_dir, settings, file_guard, request_service=request_service)
     app.state.excel_service = ExcelService(repository, permissions, request_service, app.state.file_service, export_dir, file_guard)
     app.add_middleware(
         CORSMiddleware,

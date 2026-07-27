@@ -10,9 +10,10 @@ const labels: Record<string, string> = {
   users: 'Пользователи',
   units: 'Оргструктура',
   catalogs: 'НСИ',
+  approval: 'Маршрут согласования',
 };
 
-export const breadcrumblessPaths = new Set(['/', '/users', '/catalogs']);
+export const breadcrumblessPaths = new Set(['/', '/users', '/catalogs', '/approval']);
 
 const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
