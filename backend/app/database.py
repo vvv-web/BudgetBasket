@@ -125,6 +125,16 @@ req_items = Table(
     Index("idx_req_items_request_id", "request_id"), Index("idx_req_items_dds_id", "dds_id"), Index("idx_req_items_invest_id", "invest_id"), Index("idx_req_items_status", "status"), Index("idx_req_items_is_income", "is_income"),
 )
 
+req_item_month_plans = Table(
+    "req_item_month_plans", metadata,
+    Column("req_item_id", PgUUID(as_uuid=True), ForeignKey("req_items.id", ondelete="CASCADE"), nullable=False),
+    Column("month", BigInteger, nullable=False),
+    Column("sum_plan", Numeric(14, 2), nullable=False, server_default=text("0")),
+    PrimaryKeyConstraint("req_item_id", "month"),
+    CheckConstraint("month BETWEEN 1 AND 12", name="req_item_month_plans_month_chk"),
+    CheckConstraint("sum_plan >= 0", name="req_item_month_plans_sum_plan_chk"),
+)
+
 storage_objects = Table(
     "storage_objects", metadata,
     Column("id", BigInteger, primary_key=True, autoincrement=True),
@@ -160,6 +170,13 @@ chat_messages = Table(
     Column("text", Text, nullable=False), Column("is_system", Boolean, nullable=False, server_default=text("false")),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Index("idx_chat_messages_chat_id_created_at", "chat_id", "created_at"), Index("idx_chat_messages_reply_to", "reply_to"),
+)
+
+message_files = Table(
+    "message_files", metadata,
+    Column("file_id", BigInteger, ForeignKey("files.id", ondelete="CASCADE"), nullable=False),
+    Column("message_id", PgUUID(as_uuid=True), ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=False),
+    PrimaryKeyConstraint("file_id", "message_id"), Index("idx_message_files_message_id", "message_id"),
 )
 
 chats_participants = Table(

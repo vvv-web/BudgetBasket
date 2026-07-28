@@ -229,7 +229,7 @@ export function FilePreviewDialog({
         <Button startIcon={<DownloadIcon />} onClick={() => file && downloadAuthorized(`/files/${file.id}/download`, file.original_name)} disabled={!file}>
           Скачать
         </Button>
-        {showOpenInNewWindow && (
+        {showOpenInNewWindow && kind !== 'unsupported' && (
           <Button variant="contained" startIcon={<OpenInNewIcon />} onClick={openInNewWindow} disabled={!url}>
             Открыть в окне
           </Button>

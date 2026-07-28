@@ -52,6 +52,7 @@ import { chatDayKey, chatDayLabel } from '../utils/chat';
 import { requestChatWebSocketUrl } from '../api/websocket';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { FilePreviewDialog } from '../components/FilePreviewDialog';
+import { ChatMessageImages } from '../components/ChatMessageImages';
 import { useAppToast } from '../components/Layout';
 import { TableColumnHeader, TableColumnTools } from '../components/TableColumnControls';
 import { ItemStatusBadge, RequestStatusBadge } from '../components/StatusBadge';
@@ -63,7 +64,7 @@ import { useTableColumnControls, useTableColumnWidths, type TableColumnDefinitio
 import { normalizePositiveAmount } from '../utils/validation';
 import { AUTH_TOKEN_KEY } from '../utils/session';
 
-const UPLOAD_ACCEPT = '.pdf,.png,.jpg,.jpeg,.xlsx,.docx';
+const UPLOAD_ACCEPT = '.pdf,.png,.jpg,.jpeg,.xlsx,.docx,.zip';
 const MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024;
 const UPLOAD_EXTENSIONS = new Set(UPLOAD_ACCEPT.split(','));
 
@@ -118,6 +119,59 @@ const ITEM_TABLE_COLUMN_MIN_WIDTHS: Record<ItemTableColumn, number> = {
 };
 
 const ITEM_TABLE_COLUMNS = Object.keys(DEFAULT_ITEM_TABLE_COLUMN_WIDTHS) as ItemTableColumn[];
+const MONTH_NAMES = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+
+function normalizeMonthAmount(value: string): string {
+  return value.replace(',', '.').replace(/^0+(?=\d)/, '');
+}
+
+function monthAmountError(value: string): string | null {
+  if (!value) return null;
+  if (value.startsWith('-')) return 'Сумма не может быть отрицательной';
+  if (!/^\d*(?:\.\d*)?$/.test(value)) return 'Введите неотрицательную сумму';
+  if ((value.split('.')[1] || '').length > 2) return 'Допустимо не более двух знаков после запятой';
+  if ((value.split('.')[0] || '0').length > 12) return 'Сумма превышает NUMERIC(14,2)';
+  return null;
+}
+
+function monthAmountToCents(value: string): bigint {
+  const [whole = '0', fraction = ''] = (value || '0').split('.');
+  return BigInt(whole || '0') * 100n + BigInt((fraction + '00').slice(0, 2));
+}
+
+function monthPlansTotal(values: string[]): bigint {
+  return values.reduce((total, value) => total + (monthAmountError(value) ? 0n : monthAmountToCents(value)), 0n);
+}
+
+function centsToAmount(value: bigint): string {
+  return `${value / 100n}.${(value % 100n).toString().padStart(2, '0')}`;
+}
+
+function annualTotalLabel(value: bigint): string {
+  return `${new Intl.NumberFormat('ru-RU').format(Number(value / 100n))},${(value % 100n).toString().padStart(2, '0')} ₽`;
+}
+
+function completeMonthPlans(plans: BudgetItem['month_plans'] | undefined): BudgetItem['month_plans'] {
+  return MONTH_NAMES.map((_, index) => ({
+    month: index + 1,
+    sum_plan: String(plans?.find((plan) => plan.month === index + 1)?.sum_plan ?? '0.00'),
+  }));
+}
+
+function redistributeMonthPlans(plans: BudgetItem['month_plans'], target: bigint): BudgetItem['month_plans'] {
+  const current = completeMonthPlans(plans);
+  const source = current.map((plan) => monthAmountToCents(String(plan.sum_plan)));
+  const total = source.reduce((sum, value) => sum + value, 0n);
+  if (total === 0n) return current;
+  const portions = source.map((value, index) => ({ index, value: value * target / total, remainder: value * target % total }));
+  let remaining = target - portions.reduce((sum, item) => sum + item.value, 0n);
+  for (const item of [...portions].sort((left, right) => right.remainder === left.remainder ? left.index - right.index : right.remainder > left.remainder ? 1 : -1)) {
+    if (remaining === 0n) break;
+    item.value += 1n;
+    remaining -= 1n;
+  }
+  return portions.map((item) => ({ month: item.index + 1, sum_plan: centsToAmount(item.value) }));
+}
 
 function uploadValidationError(file: File) {
   const extension = `.${file.name.split('.').pop()?.toLowerCase() || ''}`;
@@ -176,6 +230,12 @@ function isInactiveCatalogSelection(catalog: CatalogItem[], articleId?: string |
 function reviewValidationError(item: BudgetItem, draft: Partial<BudgetItem>) {
   const status = draft.status || item.status;
   const sumFact = draft.sum_fact !== undefined ? draft.sum_fact : item.sum_fact;
+  if (item.is_income && draft.sum_fact !== undefined) {
+    const monthTotal = monthPlansTotal((draft.month_plans ?? item.month_plans ?? []).map((plan) => String(plan.sum_plan)));
+    if (monthAmountToCents(String(draft.sum_fact ?? 0)) !== monthTotal) {
+      return 'Утверждённая сумма должна совпадать с итогом месячного плана. Используйте «Автоподбор» или скорректируйте месяцы.';
+    }
+  }
   if (status === 'approved' && sumFact !== null && Number(sumFact) !== Number(item.sum_plan)) {
     return 'Для статуса «Утверждено» сумма должна совпадать с планом.';
   }
@@ -211,6 +271,7 @@ type ChatMessage = {
   created_at: string;
   is_system?: boolean;
   sender: { id: string; login: string; role: 'economist' | 'employee'; profile?: Profile | null } | null;
+  files: FileAttachment[];
 };
 type RequestChat = {
   participants: { user_id: string; last_read_message_id: string | null }[];
@@ -663,8 +724,11 @@ function AddItemForm({
   const [article, setArticle] = useState<CatalogItem | null>(null);
   const [name, setName] = useState('');
   const [sumPlan, setSumPlan] = useState('');
+  const [monthPlanValues, setMonthPlanValues] = useState<string[]>(() => Array(12).fill(''));
   const [justification, setJustification] = useState('');
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const annualTotal = monthPlansTotal(monthPlanValues);
+  const monthPlanErrors = monthPlanValues.map(monthAmountError);
 
   const create = useMutation({
     mutationFn: async () => {
@@ -672,7 +736,10 @@ function AddItemForm({
         [kind === 'dds' ? 'dds_id' : 'invest_id']: article?.id,
         is_income: isIncome,
         name,
-        sum_plan: Number(sumPlan),
+        sum_plan: isIncome ? centsToAmount(annualTotal) : Number(sumPlan),
+        ...(isIncome ? {
+          month_plans: monthPlanValues.map((sum_plan, index) => ({ month: index + 1, sum_plan: centsToAmount(monthAmountError(sum_plan) ? 0n : monthAmountToCents(sum_plan)) })),
+        } : {}),
         justification,
       });
       try {
@@ -694,6 +761,7 @@ function AddItemForm({
       setArticle(null);
       setName('');
       setSumPlan('');
+      setMonthPlanValues(Array(12).fill(''));
       setJustification('');
       setPendingFiles([]);
       queryClient.invalidateQueries({ queryKey: ['request-details', requestId] });
@@ -704,6 +772,7 @@ function AddItemForm({
         setArticle(null);
         setName('');
         setSumPlan('');
+        setMonthPlanValues(Array(12).fill(''));
         setJustification('');
         setPendingFiles([]);
       }
@@ -747,14 +816,14 @@ function AddItemForm({
           />
         )}
       />
-      <TextField
-        label="Плановая сумма"
-        inputProps={{ inputMode: 'decimal' }}
-        value={sumPlan}
-        onChange={(event) => setSumPlan(normalizePositiveAmount(event.target.value))}
-        disabled={disabled}
-        sx={{ minWidth: { xs: 0, sm: 140 }, width: { xs: '100%', lg: 'auto' } }}
-      />
+      {!isIncome && <TextField
+          label="Плановая сумма"
+          inputProps={{ inputMode: 'decimal' }}
+          value={sumPlan}
+          onChange={(event) => setSumPlan(normalizePositiveAmount(event.target.value))}
+          disabled={disabled}
+          sx={{ minWidth: { xs: 0, sm: 140 }, width: { xs: '100%', lg: 'auto' } }}
+        />}
       <TextField
         label="Наименование"
         value={name}
@@ -762,10 +831,24 @@ function AddItemForm({
         disabled={disabled}
         sx={{ minWidth: { xs: 0, sm: 200 }, width: { xs: '100%', lg: 'auto' }, flex: 1 }}
       />
-        <Button variant="contained" onClick={() => create.mutate()} disabled={disabled || !article || !name.trim() || Number(sumPlan) <= 0 || create.isPending} sx={{ width: { xs: '100%', lg: 'auto' } }}>
+        <Button variant="contained" onClick={() => create.mutate()} disabled={disabled || !article || !name.trim() || (!isIncome && Number(sumPlan) <= 0) || monthPlanErrors.some(Boolean) || create.isPending} sx={{ width: { xs: '100%', lg: 'auto' } }}>
           {isIncome ? 'Добавить доход' : 'Добавить расход'}
         </Button>
       </Stack>
+      {isIncome && (
+        <Box component="section" sx={{ borderTop: 1, borderColor: 'divider', pt: 2 }}>
+          <Typography variant="subtitle1" sx={{ mb: 1.25 }}>План поступлений по месяцам</Typography>
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', lg: 'repeat(4, 1fr)' }, gap: 1.25 }}>
+            {MONTH_NAMES.map((month, index) => (
+              <TextField key={month} label={month} size="small" inputProps={{ inputMode: 'decimal' }} value={monthPlanValues[index]}
+                error={!!monthPlanErrors[index]} helperText={monthPlanErrors[index] || undefined} disabled={disabled}
+                onChange={(event) => setMonthPlanValues((current) => current.map((value, itemIndex) => itemIndex === index ? normalizeMonthAmount(event.target.value) : value))}
+              />
+            ))}
+          </Box>
+          <Typography variant="subtitle1" sx={{ mt: 1.5 }}>Итого за год: {annualTotalLabel(annualTotal)}</Typography>
+        </Box>
+      )}
       <TextField
         label="Обоснование"
         value={justification}
@@ -783,7 +866,7 @@ function AddItemForm({
           }} />
         </Button>
         <Typography variant="body2" color="text.secondary">
-          PDF, PNG, JPG, XLSX, DOCX; до 25 МБ каждый.
+          PDF, PNG, JPG, XLSX, DOCX, ZIP; до 25 МБ каждый.
         </Typography>
       </Stack>
       {pendingFiles.length > 0 && (
@@ -800,6 +883,44 @@ function AddItemForm({
         </Stack>
       )}
     </Stack>
+  );
+}
+
+function IncomeMonthPlanEditor({
+  plans,
+  disabled,
+  onChange,
+}: {
+  plans: BudgetItem['month_plans'] | undefined;
+  disabled: boolean;
+  onChange: (plans: BudgetItem['month_plans']) => void;
+}) {
+  const values = MONTH_NAMES.map((_, index) => String(plans?.find((plan) => plan.month === index + 1)?.sum_plan ?? ''));
+  const total = monthPlansTotal(values);
+  return (
+    <Box sx={{ minWidth: 300 }}>
+      <Typography variant="caption" color="text.secondary">План поступлений по месяцам</Typography>
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)' }, gap: 1, mt: 0.75 }}>
+        {MONTH_NAMES.map((month, index) => {
+          const error = monthAmountError(values[index]);
+          return <TextField
+            key={month}
+            size="small"
+            label={month}
+            value={values[index]}
+            inputProps={{ inputMode: 'decimal' }}
+            error={!!error}
+            helperText={error || undefined}
+            disabled={disabled}
+            onChange={(event) => {
+              const next = values.map((value, valueIndex) => valueIndex === index ? normalizeMonthAmount(event.target.value) : value);
+              onChange(next.map((sum_plan, monthIndex) => ({ month: monthIndex + 1, sum_plan: centsToAmount(monthAmountError(sum_plan) ? 0n : monthAmountToCents(sum_plan)) })));
+            }}
+          />;
+        })}
+      </Box>
+      <Typography variant="body2" sx={{ mt: 1 }}>Итого за год: {annualTotalLabel(total)}</Typography>
+    </Box>
   );
 }
 
@@ -826,6 +947,7 @@ function ItemsTable({
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [stagedFilesByItem, setStagedFilesByItem] = useState<Record<string, File[]>>({});
   const [pendingDeletedFileIdsByItem, setPendingDeletedFileIdsByItem] = useState<Record<string, number[]>>({});
+  const [autoFitSnapshots, setAutoFitSnapshots] = useState<Record<string, { month_plans: BudgetItem['month_plans']; sum_fact: number | null | undefined }>>({});
   const [deleteTarget, setDeleteTarget] = useState<BudgetItem | null>(null);
   const canEmployeeChange = user.role === 'employee' && request.status === 'draft' && !request.frozen;
   const disabledForEmployee = !canEmployeeChange;
@@ -851,6 +973,33 @@ function ItemsTable({
       [itemId]: { ...current[itemId], ...patch },
     }));
   }, []);
+  const updateEconomistMonthPlans = useCallback((itemId: string, month_plans: BudgetItem['month_plans']) => {
+    const total = monthPlansTotal(month_plans.map((plan) => String(plan.sum_plan)));
+    setDrafts((current) => ({
+      ...current,
+      [itemId]: { ...current[itemId], month_plans, sum_fact: Number(centsToAmount(total)) },
+    }));
+  }, []);
+  const autoFitEconomistMonthPlans = useCallback((itemId: string, month_plans: BudgetItem['month_plans'], sumFact: number | null | undefined) => {
+    setAutoFitSnapshots((current) => ({
+      ...current,
+      [itemId]: { month_plans: completeMonthPlans(month_plans), sum_fact: sumFact },
+    }));
+    updateEconomistMonthPlans(itemId, redistributeMonthPlans(month_plans, monthAmountToCents(String(sumFact ?? 0))));
+  }, [updateEconomistMonthPlans]);
+  const rollbackAutoFit = useCallback((itemId: string) => {
+    const snapshot = autoFitSnapshots[itemId];
+    if (!snapshot) return;
+    setDrafts((current) => ({
+      ...current,
+      [itemId]: { ...current[itemId], month_plans: snapshot.month_plans, sum_fact: snapshot.sum_fact },
+    }));
+    setAutoFitSnapshots((current) => {
+      const next = { ...current };
+      delete next[itemId];
+      return next;
+    });
+  }, [autoFitSnapshots]);
 
   const itemTableDefinitions = useMemo<TableColumnDefinition<BudgetItem, ItemTableColumn>[]>(() => [
     { id: 'actions', label: '\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u044F', sortable: false, filterable: false, hideable: false, getValue: () => '' },
@@ -1024,14 +1173,20 @@ function ItemsTable({
         return (
           <TableCell key={columnId} sx={bodyCellSx(columnId)}>
             {isEditingItem && !isDeleted ? (
-              <TextField
-                size="small"
-                type="number"
-                value={local.sum_plan ?? item.sum_plan}
-                onChange={(event) => updateEmployeeDraft(item.id, { sum_plan: Number(event.target.value) })}
-                inputProps={{ min: 0 }}
-                sx={{ width: '100%', minWidth: 0 }}
-              />
+              item.is_income ? (
+                <IncomeMonthPlanEditor
+                  plans={local.month_plans ?? item.month_plans}
+                  disabled={saveEmployeeItemChanges.isPending}
+                  onChange={(month_plans) => updateEmployeeDraft(item.id, { month_plans })}
+                />
+              ) : <TextField
+                  size="small"
+                  type="number"
+                  value={local.sum_plan ?? item.sum_plan}
+                  onChange={(event) => updateEmployeeDraft(item.id, { sum_plan: Number(event.target.value) })}
+                  inputProps={{ min: 0 }}
+                  sx={{ width: '100%', minWidth: 0 }}
+                />
             ) : (
               money(item.sum_plan)
             )}
@@ -1251,6 +1406,11 @@ function ItemsTable({
         delete next[variables.id];
         return next;
       });
+      setAutoFitSnapshots((current) => {
+        const next = { ...current };
+        delete next[variables.id];
+        return next;
+      });
       refresh();
       toast('Строка сохранена', 'success');
     },
@@ -1289,6 +1449,11 @@ function ItemsTable({
     onSuccess: (_data, itemId) => {
       setEditingItemId(null);
       setDrafts((current) => {
+        const next = { ...current };
+        delete next[itemId];
+        return next;
+      });
+      setAutoFitSnapshots((current) => {
         const next = { ...current };
         delete next[itemId];
         return next;
@@ -1437,32 +1602,79 @@ function ItemsTable({
               const planValue = Number(local.sum_plan ?? item.sum_plan);
               const factValue = local.sum_fact !== undefined ? local.sum_fact : item.sum_fact;
               const planFactDifference = factValue === null || factValue === undefined ? null : Number(factValue) - planValue;
+              const visibleMonthPlans = local.month_plans ?? item.month_plans ?? [];
               return (
-                <TableRow
-                  key={item.id}
-                  className={[inactiveCatalogSelection && 'inactive-catalog-item', isDeleted && 'deleted-request-item'].filter(Boolean).join(' ')}
-                  sx={{
-                    ...(inactiveCatalogSelection ? { '& > .MuiTableCell-root': { bgcolor: 'rgba(237, 108, 2, 0.08)' } } : {}),
-                    ...(isDeleted ? { '& > .MuiTableCell-root': { bgcolor: 'action.hover', color: 'text.secondary' } } : {}),
-                  }}
-                >
-                  {visibleItemColumns.map((column) => renderItemCell(
-                    column.id,
-                    item,
-                    local,
-                    isDeleted,
-                    isEditingItem,
-                    draftStatus,
-                    inactiveCatalogSelection,
-                    catalogId ?? null,
-                    catalogEntry,
-                    validationError,
-                    hasDraftChanges,
-                    planFactDifference,
-                    stagedFiles,
-                    pendingDeletedFileIds,
-                  ))}
-                </TableRow>
+                <Fragment key={item.id}>
+                  <TableRow
+                    className={[inactiveCatalogSelection && 'inactive-catalog-item', isDeleted && 'deleted-request-item'].filter(Boolean).join(' ')}
+                    sx={{
+                      ...(inactiveCatalogSelection ? { '& > .MuiTableCell-root': { bgcolor: 'rgba(237, 108, 2, 0.08)' } } : {}),
+                      ...(isDeleted ? { '& > .MuiTableCell-root': { bgcolor: 'action.hover', color: 'text.secondary' } } : {}),
+                    }}
+                  >
+                    {visibleItemColumns.map((column) => renderItemCell(
+                      column.id,
+                      item,
+                      local,
+                      isDeleted,
+                      isEditingItem,
+                      draftStatus,
+                      inactiveCatalogSelection,
+                      catalogId ?? null,
+                      catalogEntry,
+                      validationError,
+                      hasDraftChanges,
+                      planFactDifference,
+                      stagedFiles,
+                      pendingDeletedFileIds,
+                    ))}
+                  </TableRow>
+                  {item.is_income && !isDeleted && (
+                    <TableRow>
+                      <TableCell colSpan={visibleItemColumns.length} sx={{ py: 1.25, px: 2, bgcolor: 'action.hover', borderBottom: 1, borderColor: 'divider' }}>
+                        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ md: 'center' }}>
+                          <Typography variant="body2" fontWeight={600} sx={{ minWidth: 156 }}>План по месяцам</Typography>
+                          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, minmax(96px, 1fr))', sm: 'repeat(4, minmax(96px, 1fr))', xl: 'repeat(6, minmax(96px, 1fr))' }, gap: 0.75, flex: 1 }}>
+                            {MONTH_NAMES.map((month, index) => {
+                              const plan = visibleMonthPlans.find((entry) => entry.month === index + 1);
+                              return <Box key={month} sx={{ px: 1, py: 0.5, borderRadius: 1, bgcolor: 'background.paper' }}>
+                                <Typography variant="caption" color="text.secondary">{month}</Typography>
+                                {canEconomist ? (
+                                  <TextField
+                                    size="small"
+                                    value={String(plan?.sum_plan ?? '')}
+                                    inputProps={{ inputMode: 'decimal' }}
+                                    onChange={(event) => {
+                                      const next = completeMonthPlans(visibleMonthPlans).map((entry) => entry.month === index + 1 ? { ...entry, sum_plan: normalizeMonthAmount(event.target.value) } : entry);
+                                      updateEconomistMonthPlans(item.id, next);
+                                    }}
+                                    sx={{ mt: 0.25, width: '100%' }}
+                                  />
+                                ) : <Typography variant="body2">{money(Number(plan?.sum_plan ?? 0))}</Typography>}
+                              </Box>;
+                            })}
+                          </Box>
+                          <Stack spacing={0.5} alignItems={{ md: 'flex-end' }}>
+                            <Typography variant="body2" fontWeight={600} whiteSpace="nowrap">Утверждено по месяцам: {money(Number(monthPlansTotal(visibleMonthPlans.map((plan) => String(plan.sum_plan))) / 100n))}</Typography>
+                            {canEconomist && (local.sum_fact !== undefined || draftStatus !== 'on_review') && (() => {
+                              const monthTotal = monthPlansTotal(visibleMonthPlans.map((plan) => String(plan.sum_plan)));
+                              const approvedTotal = monthAmountToCents(String(factValue ?? 0));
+                              const difference = approvedTotal - monthTotal;
+                              const snapshot = autoFitSnapshots[item.id];
+                              return <>
+                                {difference !== 0n && <>
+                                  <Typography variant="caption" color={difference > 0n ? 'success.main' : 'error.main'}>Разница: {annualTotalLabel(difference < 0n ? -difference : difference)}</Typography>
+                                  <Button size="small" variant="outlined" disabled={monthTotal === 0n} onClick={() => autoFitEconomistMonthPlans(item.id, visibleMonthPlans, factValue)}>Автоподбор</Button>
+                                </>}
+                                {snapshot && <Button size="small" color="inherit" onClick={() => rollbackAutoFit(item.id)}>Откатить</Button>}
+                              </>;
+                            })()}
+                          </Stack>
+                        </Stack>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </Fragment>
               );
             })}
           </TableBody>
@@ -1540,6 +1752,7 @@ export default function RequestDetailsPage({ user }: { user: User }) {
     [logs],
   );
   const [chatText, setChatText] = useState('');
+  const [chatImages, setChatImages] = useState<File[]>([]);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const chatMessages = chat?.messages || [];
   useEffect(() => {
@@ -1608,9 +1821,16 @@ export default function RequestDetailsPage({ user }: { user: User }) {
     };
   }, [chat, id, queryClient, request?.id, request?.status]);
   const sendChatMessage = useMutation({
-    mutationFn: () => api.post(`/requests/${id}/chat/messages`, { text: chatText }),
+    mutationFn: () => {
+      if (!chatImages.length) return api.post(`/requests/${id}/chat/messages`, { text: chatText.trim() });
+      const form = new FormData();
+      form.append('text', chatText.trim());
+      chatImages.forEach((image) => form.append('images', image));
+      return api.post(`/requests/${id}/chat/messages/images`, form);
+    },
     onSuccess: () => {
       setChatText('');
+      setChatImages([]);
       queryClient.invalidateQueries({ queryKey: [...detailsKey, 'chat'] });
       queryClient.invalidateQueries({ queryKey: [...detailsKey, 'logs'] });
     },
@@ -2133,6 +2353,7 @@ export default function RequestDetailsPage({ user }: { user: User }) {
                   <Box className="request-chat-bubble">
                     {!isOwn && !isSystem && <Typography className="request-chat-sender" variant="caption">{chatSenderName(message.sender)}</Typography>}
                     {isSystem && <Typography className="request-chat-system-label" variant="caption">Системное сообщение</Typography>}
+                    <ChatMessageImages files={message.files || []} />
                     <Typography className="request-chat-text">{message.text}</Typography>
                     <Typography className="request-chat-time" variant="caption">{chatTime(message.created_at)}</Typography>
                   </Box>
@@ -2147,7 +2368,7 @@ export default function RequestDetailsPage({ user }: { user: User }) {
               className="request-chat-composer"
               onSubmit={(event) => {
                 event.preventDefault();
-                if (chatText.trim() && !sendChatMessage.isPending) sendChatMessage.mutate();
+                if ((chatText.trim() || chatImages.length) && !sendChatMessage.isPending) sendChatMessage.mutate();
               }}
             >
               <TextField
@@ -2156,7 +2377,7 @@ export default function RequestDetailsPage({ user }: { user: User }) {
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && !event.shiftKey) {
                     event.preventDefault();
-                    if (chatText.trim() && !sendChatMessage.isPending) sendChatMessage.mutate();
+                    if ((chatText.trim() || chatImages.length) && !sendChatMessage.isPending) sendChatMessage.mutate();
                   }
                 }}
                 placeholder="Напишите сообщение…"
@@ -2166,7 +2387,18 @@ export default function RequestDetailsPage({ user }: { user: User }) {
                 minRows={1}
                 maxRows={4}
               />
-              <Button type="submit" className="request-chat-send" variant="contained" endIcon={<SendIcon />} disabled={!chatText.trim() || sendChatMessage.isPending}>
+              <IconButton component="label" aria-label="Прикрепить изображения" disabled={sendChatMessage.isPending}>
+                <AttachFileIcon />
+                <input hidden type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple onChange={(event) => {
+                  const images = Array.from(event.target.files || []).filter((file) => file.type === "image/png" || file.type === "image/jpeg" || file.type === "image/gif" || file.type === "image/webp");
+                  setChatImages((current) => [...current, ...images.filter((file) => !current.some((item) => item.name === file.name && item.size === file.size && item.lastModified === file.lastModified))]);
+                  event.currentTarget.value = "";
+                }} />
+              </IconButton>
+              {!!chatImages.length && <Box className="chat-pending-images">{chatImages.map((image) => (
+                <Chip key={`${image.name}-${image.lastModified}`} size="small" label={image.name} onDelete={() => setChatImages((current) => current.filter((item) => item !== image))} />
+              ))}</Box>}
+              <Button type="submit" className="request-chat-send" variant="contained" endIcon={<SendIcon />} disabled={(!chatText.trim() && !chatImages.length) || sendChatMessage.isPending}>
                 Отправить
               </Button>
           </Box>

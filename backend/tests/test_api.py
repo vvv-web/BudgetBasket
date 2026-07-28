@@ -1,3 +1,5 @@
+import io
+import zipfile
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -41,6 +43,32 @@ def test_login_all_roles(tmp_path):
     assert client.post("/auth/login", json={"login": "admin", "password": "admin"}).json()["user"]["role"] == "admin"
     assert client.post("/auth/login", json={"login": "economist", "password": "economist"}).json()["user"]["role"] == "economist"
     assert client.post("/auth/login", json={"login": "employee", "password": "employee"}).json()["user"]["role"] == "employee"
+
+
+def test_employee_can_attach_and_download_zip_archive(tmp_path):
+    client = make_client(tmp_path)
+    employee = auth(client, "employee", "employee")
+    request = client.post("/requests", json={"unit_id": MODULE_ALPHA_ID}, headers=employee).json()
+    item = client.post(
+        f"/requests/{request['id']}/items",
+        json={"dds_id": DDS_LICENSE_ID, "name": "Archive", "sum_plan": 100, "justification": ""},
+        headers=employee,
+    ).json()
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("readme.txt", "Attachment archive")
+
+    uploaded = client.post(
+        f"/items/{item['id']}/files",
+        files={"file": ("attachments.zip", payload.getvalue(), "application/zip")},
+        headers=employee,
+    )
+
+    assert uploaded.status_code == 200
+    downloaded = client.get(f"/files/{uploaded.json()['id']}/download", headers=employee)
+    assert downloaded.status_code == 200
+    assert downloaded.headers["content-type"] == "application/zip"
+    assert downloaded.content == payload.getvalue()
 
 
 def test_expense_and_income_dashboards_are_separate(tmp_path):

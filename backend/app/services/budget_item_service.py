@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from fastapi import HTTPException
 
 from app.models import ItemStatus, RequestStatus
@@ -14,8 +16,70 @@ class BudgetItemService:
         self.requests = requests
 
     @staticmethod
-    def _public_item(item: dict) -> dict:
-        return {**item, "name": clean_request_item_name(item.get("name"))}
+    def _public_item(item: dict, month_plans: list[dict] | None = None) -> dict:
+        plans = month_plans if item.get("is_income", False) else []
+        return {
+            **item,
+            "name": clean_request_item_name(item.get("name")),
+            "month_plans": plans or [],
+        }
+
+    @staticmethod
+    def _decimal(value: object) -> Decimal:
+        return value if isinstance(value, Decimal) else Decimal(str(value))
+
+    @staticmethod
+    def _zero_month_plans() -> list[dict]:
+        return [{"month": month, "sum_plan": Decimal("0")} for month in range(1, 13)]
+
+    def _month_plans_by_item(self, item_ids: set[str] | None = None) -> dict[str, list[dict]]:
+        plans: dict[str, dict[int, Decimal]] = {}
+        for row in self.repo.load_all("req_item_month_plans"):
+            item_id = row["req_item_id"]
+            if item_ids is None or item_id in item_ids:
+                plans.setdefault(item_id, {})[int(row["month"])] = self._decimal(row["sum_plan"])
+        return {
+            item_id: [
+                {"month": month, "sum_plan": values.get(month, Decimal("0"))}
+                for month in range(1, 13)
+            ]
+            for item_id, values in plans.items()
+        }
+
+    def _month_plans_for_item(self, item: dict) -> list[dict]:
+        if not item.get("is_income", False):
+            return []
+        return self._month_plans_by_item({item["id"]}).get(
+            item["id"],
+            self._zero_month_plans(),
+        )
+
+    @classmethod
+    def _validate_month_plans(cls, month_plans: list[dict]) -> tuple[list[dict], Decimal]:
+        by_month: dict[int, Decimal] = {}
+        for plan in month_plans:
+            month = int(plan["month"])
+            if month in by_month:
+                raise HTTPException(status_code=422, detail="Месяцы в помесячном плане не должны повторяться")
+            if not 1 <= month <= 12:
+                raise HTTPException(status_code=422, detail="Номер месяца должен быть от 1 до 12")
+            amount = cls._decimal(plan["sum_plan"])
+            if amount < 0:
+                raise HTTPException(status_code=422, detail="Сумма за месяц не может быть отрицательной")
+            if amount.as_tuple().exponent < -2 or amount >= Decimal("1000000000000"):
+                raise HTTPException(status_code=422, detail="Сумма должна соответствовать формату NUMERIC(14,2)")
+            by_month[month] = amount
+        normalized = [
+            {"month": month, "sum_plan": by_month.get(month, Decimal("0"))}
+            for month in range(1, 13)
+        ]
+        return normalized, sum((plan["sum_plan"] for plan in normalized), Decimal("0"))
+
+    @staticmethod
+    def _replace_month_plans(repo: Repository, item_id: str, month_plans: list[dict]) -> None:
+        repo.delete_where("req_item_month_plans", {"req_item_id": item_id})
+        for plan in month_plans:
+            repo.create("req_item_month_plans", {"req_item_id": item_id, **plan})
 
     @staticmethod
     def catalog_collection(kind: str) -> str:
@@ -26,7 +90,8 @@ class BudgetItemService:
         self.permissions.require_view_request(user, request)
         items = [item for item in self.repo.load_all("req_items") if item["request_id"] == request_id]
         visible_items = items if include_deleted else [item for item in items if item.get("status") != ItemStatus.deleted]
-        return [self._public_item(item) for item in visible_items]
+        plans_by_item = self._month_plans_by_item({item["id"] for item in visible_items})
+        return [self._public_item(item, plans_by_item.get(item["id"], self._zero_month_plans())) for item in visible_items]
 
     def _kind_for_request(self, request: dict) -> str:
         unit = get_required(self.repo, "units", request["unit_id"])
@@ -63,36 +128,52 @@ class BudgetItemService:
         kind, article_id = self._validate_article(request, payload)
         if not payload["name"].strip():
             raise HTTPException(status_code=400, detail="Укажите наименование строки заявки")
+        is_income = payload.get("is_income", False)
+        raw_month_plans = payload.get("month_plans") if "month_plans" in payload else (
+            [{"month": 1, "sum_plan": payload["sum_plan"]}] if is_income else []
+        )
+        raw_month_plans = raw_month_plans or []
+        if not is_income and raw_month_plans:
+            raise HTTPException(status_code=422, detail="Помесячный план доступен только для доходной строки")
+        month_plans, total = self._validate_month_plans(raw_month_plans) if is_income else ([], self._decimal(payload["sum_plan"]))
         item = {
             "request_id": request_id,
             "dds_id": article_id if kind == "dds" else None,
             "invest_id": article_id if kind == "invest" else None,
-            "is_income": payload.get("is_income", False),
+            "is_income": is_income,
             "name": payload["name"].strip(),
-            "sum_plan": payload["sum_plan"],
+            "sum_plan": total,
             "sum_fact": 0,
             "justification": payload.get("justification", "").strip(),
             "status": ItemStatus.on_review,
             "comment": "",
         }
-        created = self.repo.create("req_items", item)
-        self.requests.recalculate_total(request_id)
-        self.requests.log(user, request_id, "line_created", entity="req_item", entity_id=created["id"], after=created)
-        return self._public_item(created)
+        with self.repo.transaction() as repo:
+            created = repo.create("req_items", item)
+            if is_income:
+                self._replace_month_plans(repo, created["id"], month_plans)
+            self.requests.recalculate_total(request_id, repo=repo)
+            public_created = self._public_item(created, month_plans)
+            self.requests.log(user, request_id, "line_created", entity="req_item", entity_id=created["id"], after=public_created, repo=repo)
+        return public_created
 
     def _find_item(self, item_id: str) -> dict:
         return get_required(self.repo, "req_items", item_id)
 
     @staticmethod
     def _employee_patch(patch: dict) -> dict:
-        allowed = {key: patch[key] for key in ("dds_id", "invest_id", "name", "sum_plan", "justification") if key in patch}
+        allowed = {
+            key: patch[key]
+            for key in ("dds_id", "invest_id", "name", "sum_plan", "justification", "is_income", "month_plans", "clear_month_plans")
+            if key in patch
+        }
         if len(allowed) != len(patch):
             raise HTTPException(status_code=403, detail="Сотрудник не может изменять поля рассмотрения")
         return allowed
 
     @staticmethod
     def _economist_patch(item: dict, patch: dict) -> dict:
-        allowed = {key: patch[key] for key in ("status", "sum_fact", "comment") if key in patch}
+        allowed = {key: patch[key] for key in ("status", "sum_fact", "comment", "month_plans") if key in patch}
         if len(allowed) != len(patch):
             raise HTTPException(status_code=403, detail="Экономист не может изменять поля сотрудника")
         status = allowed.get("status", item["status"])
@@ -126,7 +207,8 @@ class BudgetItemService:
             raise HTTPException(status_code=400, detail="Удалённую строку заявки нельзя изменить")
         if request["status"] in {RequestStatus.approved, RequestStatus.approved_with_changes, RequestStatus.partially_approved, RequestStatus.rejected, RequestStatus.cancelled}:
             raise HTTPException(status_code=400, detail="Завершённую заявку нельзя изменить")
-        if user["role"] == "economist":
+        is_economist = user["role"] == "economist"
+        if is_economist:
             self.permissions.require_economist_review_request(user, request)
             normalized = self._economist_patch(item, patch)
         else:
@@ -144,15 +226,55 @@ class BudgetItemService:
             if "justification" in normalized:
                 normalized["justification"] = normalized["justification"].strip()
         if not normalized:
-            return self._public_item(item)
+            return self._public_item(item, self._month_plans_for_item(item))
+
+        is_income = normalized.get("is_income", item.get("is_income", False))
+        raw_month_plans = normalized.pop("month_plans", None)
+        clear_month_plans = normalized.pop("clear_month_plans", False)
+        if not is_income and raw_month_plans:
+            raise HTTPException(status_code=422, detail="Помесячный план доступен только для доходной строки")
+        if item.get("is_income", False) and not is_income and not clear_month_plans:
+            raise HTTPException(status_code=422, detail="Подтвердите очистку помесячного плана перед сменой типа строки")
+
+        month_plans: list[dict] | None = None
+        if is_income:
+            if raw_month_plans is not None:
+                month_plans, total = self._validate_month_plans(raw_month_plans)
+                if is_economist:
+                    normalized["sum_fact"] = total
+                else:
+                    normalized["sum_plan"] = total
+            elif is_economist and "sum_fact" in patch and self._decimal(normalized["sum_fact"]) != sum(
+                (plan["sum_plan"] for plan in self._month_plans_for_item(item)), Decimal("0")
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail="Утверждённая сумма должна совпадать с суммой месячного плана. Используйте автоподбор или скорректируйте месяцы.",
+                )
+            elif not item.get("is_income", False):
+                month_plans, total = self._validate_month_plans([])
+                normalized["sum_plan"] = total
+            else:
+                normalized.pop("sum_plan", None)
+        elif item.get("is_income", False):
+            month_plans = []
+
         effective = {key: value for key, value in normalized.items() if item.get(key) != value}
-        if not effective:
-            return self._public_item(item)
-        updated = self.repo.update("req_items", item_id, effective)
-        self.requests.recalculate_total(item["request_id"])
-        action = "line_deleted" if updated.get("status") == ItemStatus.deleted else "line_updated"
-        self.requests.log(user, item["request_id"], action, entity="req_item", entity_id=item_id, before=item, after=updated)
-        return self._public_item(updated)
+        before = self._public_item(item, self._month_plans_for_item(item))
+        if not effective and month_plans is None:
+            return before
+        with self.repo.transaction() as repo:
+            updated = repo.update("req_items", item_id, effective) if effective else item
+            if month_plans is not None:
+                self._replace_month_plans(repo, item_id, month_plans)
+            self.requests.recalculate_total(item["request_id"], repo=repo)
+            public_updated = self._public_item(
+                updated,
+                (month_plans if month_plans is not None else before["month_plans"]) if updated.get("is_income", False) else [],
+            )
+            action = "line_deleted" if updated.get("status") == ItemStatus.deleted else "line_updated"
+            self.requests.log(user, item["request_id"], action, entity="req_item", entity_id=item_id, before=before, after=public_updated, repo=repo)
+        return public_updated
 
     def delete_item(self, user: dict, item_id: str) -> dict:
         item = self._find_item(item_id)

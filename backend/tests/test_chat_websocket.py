@@ -44,6 +44,47 @@ def test_chat_websocket_notifies_request_participants(tmp_path):
         }
 
 
+def test_chat_image_is_visible_to_chat_participants_and_downloadable(tmp_path):
+    client = make_client(tmp_path)
+    employee = auth(client, "employee", "employee")
+    economist = auth(client, "economist", "economist")
+    request = submitted_request(client, employee)
+
+    response = client.post(
+        f"/requests/{request['id']}/chat/messages/images",
+        data={"text": "Схема"},
+        files=[("images", ("diagram.png", b"not-a-real-png", "image/png"))],
+        headers=employee,
+    )
+
+    assert response.status_code == 200
+    message = response.json()
+    assert message["text"] == "Схема"
+    assert len(message["files"]) == 1
+    chat = client.get(f"/requests/{request['id']}/chat", headers=economist)
+    attached = chat.json()["messages"][-1]["files"]
+    assert attached == message["files"]
+    download = client.get(f"/files/{attached[0]['id']}/download", headers=economist)
+    assert download.status_code == 200
+    assert download.headers["content-type"] == "image/png"
+    assert download.content == b"not-a-real-png"
+
+
+def test_chat_rejects_non_image_attachment(tmp_path):
+    client = make_client(tmp_path)
+    employee = auth(client, "employee", "employee")
+    request = submitted_request(client, employee)
+
+    response = client.post(
+        f"/requests/{request['id']}/chat/messages/images",
+        files=[("images", ("document.pdf", b"pdf", "application/pdf"))],
+        headers=employee,
+    )
+
+    assert response.status_code == 400
+    assert client.get(f"/requests/{request['id']}/chat", headers=employee).json()["messages"] == []
+
+
 def test_chat_notification_and_list_include_unread_message(tmp_path):
     client = make_client(tmp_path)
     employee = auth(client, "employee", "employee")

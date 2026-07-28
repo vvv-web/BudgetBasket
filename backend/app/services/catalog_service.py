@@ -21,10 +21,18 @@ class CatalogService:
     def department_id_for_unit(self, unit_id: str | None) -> str | None:
         if not unit_id:
             return None
-        unit = self.repo.get_by_id("units", unit_id)
+        units = {item["id"]: item for item in self.repo.load_all("units")}
+        unit = units.get(unit_id)
         if not unit:
             return None
-        return unit["parent_id"] or unit["id"]
+        visited: set[str] = set()
+        while unit.get("parent_id") and unit["id"] not in visited:
+            visited.add(unit["id"])
+            parent = units.get(unit["parent_id"])
+            if not parent:
+                break
+            unit = parent
+        return unit["id"]
 
     def _default_department_id(self) -> str | None:
         department = next((unit for unit in self.repo.load_all("units") if unit.get("parent_id") is None), None)

@@ -25,6 +25,26 @@ import type {
 
 type ColumnMeta<K extends string> = Pick<TableColumnDefinition<unknown, K>, 'id' | 'label' | 'hideable'>;
 
+function filterOptionLineCount(label: string): number {
+  const maxCharactersPerLine = 18;
+  let lines = 1;
+  let currentLineLength = 0;
+
+  for (const word of label.split(/\s+/)) {
+    const wordLines = Math.ceil(word.length / maxCharactersPerLine);
+    const wordLength = Math.min(word.length, maxCharactersPerLine);
+    if (currentLineLength && currentLineLength + wordLength + 1 > maxCharactersPerLine) {
+      lines += 1;
+      currentLineLength = 0;
+    }
+    currentLineLength += wordLength + (currentLineLength ? 1 : 0);
+    lines += wordLines - 1;
+    if (wordLines > 1) currentLineLength = word.length % maxCharactersPerLine || maxCharactersPerLine;
+  }
+
+  return lines;
+}
+
 export function TableColumnTools<K extends string>({
   columns,
   visibility,
@@ -291,14 +311,49 @@ export function TableColumnHeader({
                 {filterOptions.length > 0 ? (
                   filterOptions.map((option) => {
                     const checked = selectedValues.includes(option.value);
+                    const lineCount = filterOptionLineCount(option.label);
                     return (
-                      <MenuItem key={option.value} dense onClick={() => onToggleFilterValue?.(option.value)}>
-                        <Checkbox edge="start" checked={checked} disableRipple />
-                        <ListItemText
-                          primary={option.label}
-                          secondary={option.count > 1 ? `${option.count} строк` : '1 строка'}
-                        />
-                      </MenuItem>
+                      <Box
+                        key={option.value}
+                        role="menuitemcheckbox"
+                        aria-checked={checked}
+                        tabIndex={0}
+                        onClick={() => onToggleFilterValue?.(option.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            onToggleFilterValue?.(option.value);
+                          }
+                        }}
+                        sx={{
+                          display: 'grid',
+                          gridTemplateColumns: '40px 64px minmax(0, 1fr)',
+                          alignItems: 'center',
+                          width: '100%',
+                          minHeight: Math.max(44, lineCount * 22 + 16),
+                          boxSizing: 'border-box',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          py: 0.75,
+                          px: 1.5,
+                          '&:hover': { bgcolor: 'action.hover' },
+                          '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 },
+                        }}
+                      >
+                        <Checkbox edge="start" checked={checked} disableRipple sx={{ ml: -0.5 }} />
+                        <Typography
+                          variant="body2"
+                          color="text.secondary"
+                          sx={{ pr: 1, lineHeight: 1.25 }}
+                        >
+                          {option.count > 1 ? `${option.count} строк` : '1 строка'}
+                        </Typography>
+                        <Box sx={{ minWidth: 0 }}>
+                          <Typography variant="body2" sx={{ whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.25 }}>
+                            {option.label}
+                          </Typography>
+                        </Box>
+                      </Box>
                     );
                   })
                 ) : (

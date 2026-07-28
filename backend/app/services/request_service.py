@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 
@@ -103,17 +105,20 @@ class RequestService:
             "deleted_count": len(self._items(request_id, include_deleted=True)) - len(items),
         }
 
-    def recalculate_total(self, request_id: str) -> dict:
-        expense_items = [item for item in self._items(request_id) if not item.get("is_income", False)]
-        return self.repo.update(
+    def recalculate_total(self, request_id: str, *, repo: Repository | None = None) -> dict:
+        active_repo = repo or self.repo
+        items = [item for item in active_repo.load_all("req_items") if item["request_id"] == request_id and item.get("status") != ItemStatus.deleted]
+        expense_items = [item for item in items if not item.get("is_income", False)]
+        return active_repo.update(
             "requests",
             request_id,
             {
-                "sum_plan": sum(float(item.get("sum_plan") or 0) for item in expense_items),
+                "sum_plan": sum((Decimal(str(item.get("sum_plan") or 0)) for item in expense_items), Decimal("0")),
                 "sum_fact": sum(
-                    float(item.get("sum_fact") or 0)
+                    (Decimal(str(item.get("sum_fact") or 0))
                     for item in expense_items
-                    if item["status"] in APPROVED_ITEM_STATUSES
+                    if item["status"] in APPROVED_ITEM_STATUSES),
+                    Decimal("0"),
                 ),
             },
         )

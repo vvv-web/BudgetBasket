@@ -6,7 +6,7 @@ import logging
 import unicodedata
 import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .antivirus import AntivirusUnavailableError, ClamAVScanner, DisabledAntivirusScanner
 from .config import settings
@@ -59,7 +59,6 @@ _DANGEROUS_EXTENSIONS = frozenset(
         ".docm",
         ".xlsm",
         ".pptm",
-        ".zip",
         ".rar",
         ".7z",
         ".tar",
@@ -70,6 +69,7 @@ _EXPECTED_MIME_BY_EXTENSION = {
     ".pdf": {"application/pdf"},
     ".docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
     ".xlsx": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+    ".zip": {"application/zip"},
     ".jpg": {"image/jpeg"},
     ".jpeg": {"image/jpeg"},
     ".png": {"image/png"},
@@ -241,6 +241,7 @@ class FileScanner:
                 size_bytes=size_bytes,
                 sha256=sha256,
             )
+        claimed_mime_type = self._normalize_claimed_mime(claimed_mime_type)
         if claimed_mime_type and (claimed_mime_type not in expected_mimes or claimed_mime_type != detected_mime):
             return self._blocked(
                 original_name=original_name,
@@ -406,11 +407,17 @@ class FileScanner:
             return "application/octet-stream"
 
     def _normalize_magic_mime(self, detected: str, *, content_bytes: bytes) -> str:
-        if detected == "application/zip":
+        if detected in {"application/zip", "application/octet-stream"} and self._looks_like_zip(content_bytes):
             return self._detect_mime_fallback(content_bytes)
         if detected == "image/jpg":
             return "image/jpeg"
         return detected
+
+    @staticmethod
+    def _normalize_claimed_mime(claimed_mime_type: str | None) -> str | None:
+        if claimed_mime_type == "application/x-zip-compressed":
+            return "application/zip"
+        return claimed_mime_type
 
     def _detect_mime_fallback(self, content_bytes: bytes) -> str:
         if content_bytes.startswith(b"%PDF-"):
@@ -422,6 +429,8 @@ class FileScanner:
         office_mime = self._detect_office_mime(content_bytes)
         if office_mime is not None:
             return office_mime
+        if self._looks_like_zip(content_bytes):
+            return "application/zip"
         return "application/octet-stream"
 
     def _detect_office_mime(self, content_bytes: bytes) -> str | None:
@@ -444,6 +453,8 @@ class FileScanner:
             return self._validate_pdf(content_bytes)
         if extension in {".docx", ".xlsx"}:
             return self._validate_office(extension=extension, content_bytes=content_bytes)
+        if extension == ".zip":
+            return self._validate_zip(content_bytes)
         if extension in {".jpg", ".jpeg", ".png"}:
             return self._validate_image(extension=extension, content_bytes=content_bytes)
         return None
@@ -454,11 +465,17 @@ class FileScanner:
             return content_bytes.startswith(b"%PDF-")
         if extension in {".docx", ".xlsx"}:
             return content_bytes.startswith(b"PK\x03\x04")
+        if extension == ".zip":
+            return FileScanner._looks_like_zip(content_bytes)
         if extension == ".png":
             return content_bytes.startswith(b"\x89PNG\r\n\x1a\n")
         if extension in {".jpg", ".jpeg"}:
             return content_bytes.startswith(b"\xff\xd8\xff")
         return False
+
+    @staticmethod
+    def _looks_like_zip(content_bytes: bytes) -> bool:
+        return content_bytes.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"))
 
     def _validate_pdf(self, content_bytes: bytes) -> tuple[str, str] | None:
         logger.info("Проверяем PDF-файл: сигнатуру, структуру и активное содержимое")
@@ -500,6 +517,40 @@ class FileScanner:
         if failure is None:
             logger.info("Office-файл прошел структурную проверку: extension=%s", extension)
         return failure
+
+    def _validate_zip(self, content_bytes: bytes) -> tuple[str, str] | None:
+        if not self._looks_like_zip(content_bytes):
+            return ("invalid_archive", "ZIP archive is corrupted or invalid")
+        try:
+            with zipfile.ZipFile(io.BytesIO(content_bytes)) as archive:
+                infos = archive.infolist()
+                if not infos:
+                    return ("invalid_archive", "ZIP archive must contain at least one file")
+                if len(infos) > settings.office_max_entries:
+                    return ("invalid_archive", "ZIP archive exceeds safety limits")
+
+                total_uncompressed = 0
+                for info in infos:
+                    if not info.filename or len(info.filename) > settings.office_max_entry_name_length:
+                        return ("invalid_archive", "ZIP archive is corrupted or invalid")
+                    normalized_path = PurePosixPath(info.filename)
+                    if info.filename.startswith(("/", "\\")) or "\\" in info.filename or ".." in normalized_path.parts:
+                        return ("invalid_archive", "ZIP archive contains an unsafe path")
+                    if info.flag_bits & 0x1:
+                        return ("encrypted_archive_not_allowed", "Encrypted ZIP archives are not allowed")
+                    if info.file_size > settings.office_max_entry_uncompressed_bytes:
+                        return ("invalid_archive", "ZIP archive exceeds safety limits")
+                    total_uncompressed += info.file_size
+                    if total_uncompressed > settings.office_max_total_uncompressed_bytes:
+                        return ("invalid_archive", "ZIP archive exceeds safety limits")
+                    if info.file_size and (info.compress_size <= 0 or info.file_size / info.compress_size > settings.office_max_compression_ratio):
+                        return ("invalid_archive", "ZIP archive exceeds safety limits")
+
+                if archive.testzip() is not None:
+                    return ("invalid_archive", "ZIP archive is corrupted or invalid")
+        except (OSError, RuntimeError, zipfile.BadZipFile):
+            return ("invalid_archive", "ZIP archive is corrupted or invalid")
+        return None
 
     def _validate_image(self, *, extension: str, content_bytes: bytes) -> tuple[str, str] | None:
         logger.info("Проверяем изображение: extension=%s", extension)

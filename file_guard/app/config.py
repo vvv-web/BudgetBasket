@@ -41,13 +41,13 @@ def _env_csv(name: str, default: str) -> tuple[str, ...]:
 class Settings:
     max_file_size_bytes: int = _env_int("FILE_GUARD_MAX_FILE_SIZE_BYTES", 25 * 1024 * 1024)
     allowed_extensions: tuple[str, ...] = _env_csv(
-        "FILE_GUARD_ALLOWED_EXTENSIONS", ".pdf,.png,.jpg,.jpeg,.xlsx,.docx"
+        "FILE_GUARD_ALLOWED_EXTENSIONS", ".pdf,.png,.jpg,.jpeg,.xlsx,.docx,.zip"
     )
     allowed_mime_types: tuple[str, ...] = _env_csv(
         "FILE_GUARD_ALLOWED_MIME_TYPES",
         "application/pdf,image/png,image/jpeg,"
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,"
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/zip",
     )
     allow_libmagic_fallback: bool = _env_bool("FILE_GUARD_ALLOW_LIBMAGIC_FALLBACK", True)
     structural_validation_enabled: bool = _env_bool("FILE_GUARD_STRUCTURAL_VALIDATION_ENABLED", True)
@@ -60,6 +60,7 @@ class Settings:
     scan_timeout_seconds: float = _env_float("FILE_GUARD_SCAN_TIMEOUT_SECONDS", 30.0)
     clamd_socket_path: str = os.getenv("FILE_GUARD_CLAMD_SOCKET_PATH", "/run/clamav/clamd.sock").strip() or "/run/clamav/clamd.sock"
     clamd_stream_chunk_bytes: int = _env_int("FILE_GUARD_CLAMD_STREAM_CHUNK_BYTES", 65536)
+    # Shared safety limits for ZIP-based files (DOCX, XLSX and standalone ZIP archives).
     office_max_entries: int = _env_int("FILE_GUARD_OFFICE_MAX_ENTRIES", 200)
     office_max_total_uncompressed_bytes: int = _env_int("FILE_GUARD_OFFICE_MAX_TOTAL_UNCOMPRESSED_BYTES", 40 * 1024 * 1024)
     office_max_entry_uncompressed_bytes: int = _env_int("FILE_GUARD_OFFICE_MAX_ENTRY_UNCOMPRESSED_BYTES", 12 * 1024 * 1024)

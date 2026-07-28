@@ -62,6 +62,12 @@ CREATE TABLE req_items (
     CONSTRAINT req_items_status_chk CHECK (status IN ('on_review', 'rejected', 'approved_with_changes', 'approved', 'deleted')),
     CONSTRAINT req_items_article_chk CHECK ((dds_id IS NULL) <> (invest_id IS NULL))
 );
+CREATE TABLE req_item_month_plans (
+    req_item_id uuid NOT NULL REFERENCES req_items(id) ON DELETE CASCADE,
+    month smallint NOT NULL CHECK (month BETWEEN 1 AND 12),
+    sum_plan numeric(14,2) NOT NULL DEFAULT 0 CHECK (sum_plan >= 0),
+    PRIMARY KEY (req_item_id, month)
+);
 
 CREATE TABLE storage_objects (
     id bigserial PRIMARY KEY, storage_bucket text NOT NULL, storage_key text NOT NULL UNIQUE,
@@ -86,6 +92,11 @@ CREATE TABLE chat_messages (
     reply_to uuid REFERENCES chat_messages(id) ON DELETE SET NULL,
     sender_id uuid REFERENCES users(id) ON DELETE RESTRICT,
     text text NOT NULL, is_system boolean NOT NULL DEFAULT false, created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE message_files (
+    file_id bigint NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    message_id uuid NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+    PRIMARY KEY (file_id, message_id)
 );
 CREATE TABLE chats_participants (
     chat_id uuid NOT NULL REFERENCES req_chats(id) ON DELETE CASCADE,
@@ -156,6 +167,7 @@ CREATE INDEX idx_storage_objects_storage_key ON storage_objects(storage_key);
 CREATE INDEX idx_storage_objects_content_sha256 ON storage_objects(content_sha256);
 CREATE INDEX idx_chat_messages_chat_id_created_at ON chat_messages(chat_id, created_at);
 CREATE INDEX idx_chat_messages_reply_to ON chat_messages(reply_to);
+CREATE INDEX idx_message_files_message_id ON message_files(message_id);
 CREATE INDEX idx_chats_participants_user_id ON chats_participants(user_id);
 CREATE INDEX idx_req_logs_req_id_created_at ON req_logs(req_id, created_at);
 CREATE INDEX idx_req_logs_user_id ON req_logs(user_id);

@@ -75,7 +75,7 @@ class InMemoryRepository:
             if collection in self._next_ids:
                 created["id"] = self._next_ids[collection]
                 self._next_ids[collection] += 1
-            elif collection not in {"profiles", "units_responsibles", "req_item_files", "chats_participants", "step_edges", "request_step_states"}:
+            elif collection not in {"profiles", "units_responsibles", "req_item_files", "req_item_month_plans", "message_files", "chats_participants", "step_edges", "request_step_states"}:
                 created["id"] = str(uuid4())
         if collection == "requests":
             created.setdefault("frozen", False)
@@ -121,6 +121,11 @@ class InMemoryRepository:
                         for edge in self.rows.setdefault("step_edges", [])
                         if str(edge.get("parent_step_id")) != str(item_id)
                         and str(edge.get("child_step_id")) != str(item_id)
+                    ]
+                if collection == "req_items":
+                    self.rows["req_item_month_plans"] = [
+                        plan for plan in self.rows.setdefault("req_item_month_plans", [])
+                        if str(plan.get("req_item_id")) != str(item_id)
                     ]
                 return
         raise HTTPException(status_code=404, detail="Record not found")

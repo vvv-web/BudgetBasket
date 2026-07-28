@@ -85,6 +85,12 @@ export interface BudgetItem {
   justification: string;
   status: ItemStatus;
   comment: string | null;
+  month_plans: ItemMonthPlan[];
+}
+
+export interface ItemMonthPlan {
+  month: number;
+  sum_plan: number | string;
 }
 
 export interface FileAttachment {

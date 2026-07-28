@@ -1107,11 +1107,11 @@ export default function RequestsPage({ user }: { user: User }) {
             <Stack spacing={1.5}>
               {deleteTargetRequest ? (
                 <Typography variant="body2" color="text.secondary">
-                  {deleteTargetRequest.unit_id ? `???????????? ?????????????????? ?? ??????????????????????: ${formatUnitName(deleteTargetRequest.unit_id)}` : ''}
+                  {deleteTargetRequest.unit_id ? `Подразделение заявки: ${formatUnitName(deleteTargetRequest.unit_id)}` : ''}
                 </Typography>
               ) : (
                 <Typography variant="body2" color="text.secondary">
-                  ???????????????? ?????????????? ????????????...
+                  Загружается состав заявки...
                 </Typography>
               )}
               {deletePreviewRows.length > 0 && (
@@ -1129,9 +1129,9 @@ export default function RequestsPage({ user }: { user: User }) {
                   <Table size="small">
                     <TableHead>
                       <TableRow>
-                        {deletePreviewVisibility.kind && <TableCell sx={{ py: 0.75 }}>{renderDeletePreviewHeader('kind', '???')}</TableCell>}
-                        {deletePreviewVisibility.name && <TableCell sx={{ py: 0.75 }}>{renderDeletePreviewHeader('name', '?????? / ??????')}</TableCell>}
-                        {deletePreviewVisibility.sum && <TableCell sx={{ py: 0.75 }} align="right">{renderDeletePreviewHeader('sum', '????')}</TableCell>}
+                        {deletePreviewVisibility.kind && <TableCell sx={{ py: 0.75 }}>{renderDeletePreviewHeader('kind', 'Тип')}</TableCell>}
+                        {deletePreviewVisibility.name && <TableCell sx={{ py: 0.75 }}>{renderDeletePreviewHeader('name', 'Статья / проект')}</TableCell>}
+                        {deletePreviewVisibility.sum && <TableCell sx={{ py: 0.75 }} align="right">{renderDeletePreviewHeader('sum', 'План')}</TableCell>}
                       </TableRow>
                     </TableHead>
                     <TableBody>
@@ -1149,7 +1149,7 @@ export default function RequestsPage({ user }: { user: User }) {
                       {visibleDeletePreviewRows.length === 0 && (
                         <TableRow>
                           <TableCell sx={{ py: 0.75 }} colSpan={visibleDeletePreviewColumns.length} align="center">
-                            ?????? ?? ???????
+                            Ничего не найдено
                           </TableCell>
                         </TableRow>
                       )}

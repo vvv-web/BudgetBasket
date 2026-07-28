@@ -6,6 +6,7 @@ import ForumOutlinedIcon from '@mui/icons-material/ForumOutlined';
 import MarkChatUnreadOutlinedIcon from '@mui/icons-material/MarkChatUnreadOutlined';
 import ReplyOutlinedIcon from '@mui/icons-material/ReplyOutlined';
 import SendIcon from '@mui/icons-material/Send';
+import AttachFileIcon from '@mui/icons-material/AttachFile';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
@@ -23,7 +24,8 @@ import { api } from '../api/client';
 import { chatDayKey, chatDayLabel } from '../utils/chat';
 import { AUTH_USER_KEY } from '../utils/session';
 import { RequestStatusBadge } from './StatusBadge';
-import type { Profile, RequestStatus } from '../types';
+import { ChatMessageImages } from './ChatMessageImages';
+import type { FileAttachment, Profile, RequestStatus } from '../types';
 
 type ChatSender = {
   id: string;
@@ -38,6 +40,7 @@ type ChatMessage = {
   is_system?: boolean;
   reply_to?: string | null;
   sender: ChatSender | null;
+  files: FileAttachment[];
 };
 
 type ChatSummary = {
@@ -76,6 +79,7 @@ export function ChatInboxDrawer({ open, onClose }: { open: boolean; onClose: () 
   const [selectedChat, setSelectedChat] = useState<ChatSummary | null>(null);
   const [messageText, setMessageText] = useState('');
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  const [pendingImages, setPendingImages] = useState<File[]>([]);
   const messagesRef = useRef<HTMLDivElement>(null);
   const lastMarkedReadRef = useRef('');
   const currentUserId = useMemo(() => {
@@ -105,12 +109,20 @@ export function ChatInboxDrawer({ open, onClose }: { open: boolean; onClose: () 
     },
   });
   const sendMessage = useMutation({
-    mutationFn: async () => api.post(`/requests/${selectedChat!.request_id}/chat/messages`, {
-      text: messageText.trim(),
-      reply_to: replyTo?.id || null,
-    }),
+    mutationFn: async () => {
+      if (!pendingImages.length) return api.post(`/requests/${selectedChat!.request_id}/chat/messages`, {
+        text: messageText.trim(),
+        reply_to: replyTo?.id || null,
+      });
+      const form = new FormData();
+      form.append('text', messageText.trim());
+      if (replyTo) form.append('reply_to', replyTo.id);
+      pendingImages.forEach((image) => form.append('images', image));
+      return api.post(`/requests/${selectedChat!.request_id}/chat/messages/images`, form);
+    },
     onSuccess: async () => {
       setMessageText('');
+      setPendingImages([]);
       setReplyTo(null);
       await queryClient.invalidateQueries({ queryKey: ['chats'] });
       await queryClient.invalidateQueries({ queryKey: ['request-details', selectedChat?.request_id, 'chat'] });
@@ -118,7 +130,10 @@ export function ChatInboxDrawer({ open, onClose }: { open: boolean; onClose: () 
   });
 
   useEffect(() => {
-    if (!open) setMessageText('');
+    if (!open) {
+      setMessageText('');
+      setPendingImages([]);
+    }
   }, [open]);
 
   useEffect(() => {
@@ -214,6 +229,7 @@ export function ChatInboxDrawer({ open, onClose }: { open: boolean; onClose: () 
                         <Typography variant="caption" noWrap>{reply.text}</Typography>
                       </Box>
                     )}
+                    <ChatMessageImages files={message.files || []} />
                     <Stack className="chat-message-content" direction="row" alignItems="flex-end" spacing={0.55}>
                       <Typography className="request-chat-text">{message.text}</Typography>
                       <Stack className="chat-message-meta" direction="row" alignItems="center" spacing={0.3}>
@@ -242,7 +258,7 @@ export function ChatInboxDrawer({ open, onClose }: { open: boolean; onClose: () 
             className="request-chat-composer"
             onSubmit={(event) => {
               event.preventDefault();
-              if (messageText.trim() && !sendMessage.isPending) sendMessage.mutate();
+              if ((messageText.trim() || pendingImages.length) && !sendMessage.isPending) sendMessage.mutate();
             }}
           >
             {replyTo && (
@@ -264,7 +280,18 @@ export function ChatInboxDrawer({ open, onClose }: { open: boolean; onClose: () 
               minRows={1}
               maxRows={4}
             />
-            <Button type="submit" className="request-chat-send" variant="contained" endIcon={<SendIcon />} disabled={!messageText.trim() || sendMessage.isPending}>
+            <IconButton component="label" aria-label="Прикрепить изображения" disabled={sendMessage.isPending}>
+              <AttachFileIcon />
+              <input hidden type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple onChange={(event) => {
+                const images = Array.from(event.target.files || []).filter((file) => file.type === "image/png" || file.type === "image/jpeg" || file.type === "image/gif" || file.type === "image/webp");
+                setPendingImages((current) => [...current, ...images.filter((file) => !current.some((item) => item.name === file.name && item.size === file.size && item.lastModified === file.lastModified))]);
+                event.currentTarget.value = "";
+              }} />
+            </IconButton>
+            {!!pendingImages.length && <Box className="chat-pending-images">{pendingImages.map((image) => (
+              <Chip key={`${image.name}-${image.lastModified}`} size="small" label={image.name} onDelete={() => setPendingImages((current) => current.filter((item) => item !== image))} />
+            ))}</Box>}
+            <Button type="submit" className="request-chat-send" variant="contained" endIcon={<SendIcon />} disabled={(!messageText.trim() && !pendingImages.length) || sendMessage.isPending}>
               Отправить
             </Button>
           </Box>

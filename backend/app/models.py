@@ -1,3 +1,4 @@
+from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
@@ -151,24 +152,33 @@ class RequestPatch(StrictModel):
     status: RequestStatus | None = None
 
 
+class ItemMonthPlan(StrictModel):
+    month: int = Field(ge=1, le=12)
+    sum_plan: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+
+
 class ItemCreate(StrictModel):
     dds_id: str | None = None
     invest_id: str | None = None
     is_income: bool = False
-    sum_plan: float = Field(ge=0)
+    sum_plan: Decimal = Field(default=Decimal("0"), ge=0, max_digits=14, decimal_places=2)
     name: str = ""
     justification: str = ""
+    month_plans: list[ItemMonthPlan] = Field(default_factory=list)
 
 
 class ItemPatch(StrictModel):
     dds_id: str | None = None
     invest_id: str | None = None
-    sum_plan: float | None = Field(default=None, ge=0)
-    sum_fact: float | None = Field(default=None, ge=0)
+    is_income: bool | None = None
+    sum_plan: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    sum_fact: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     status: ItemStatus | None = None
     comment: str | None = None
     name: str | None = Field(default=None, min_length=1)
     justification: str | None = None
+    month_plans: list[ItemMonthPlan] | None = None
+    clear_month_plans: bool = False
 
 
 class ChatMessageCreate(StrictModel):

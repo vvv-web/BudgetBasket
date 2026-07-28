@@ -24,7 +24,8 @@ class Settings:
             "ALLOWED_UPLOAD_MIME_TYPES",
             "application/pdf,image/png,image/jpeg,"
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,"
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document,"
+            "application/zip",
         ).split(",")
         if item.strip()
     )

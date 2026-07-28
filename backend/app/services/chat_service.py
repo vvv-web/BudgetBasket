@@ -58,6 +58,12 @@ class ChatService:
         self._require_participant(user, request, chat)
         users = {item["id"]: item for item in self.repo.load_all("users")}
         profiles = {item["user_id"]: item for item in self.repo.load_all("profiles")}
+        files = {item["id"]: item for item in self.repo.load_all("files")}
+        files_by_message: dict[str, list[dict]] = {}
+        for link in self.repo.load_all("message_files"):
+            file = files.get(link.get("file_id"))
+            if file:
+                files_by_message.setdefault(link["message_id"], []).append(file)
         messages = []
         for message in self.repo.load_all("chat_messages"):
             if message.get("chat_id") != chat["id"]:
@@ -66,6 +72,7 @@ class ChatService:
             sender = users.get(sender_id, {})
             messages.append({
                 **message,
+                "files": files_by_message.get(message["id"], []),
                 "sender": (
                     {"id": sender.get("id"), "login": sender.get("login"), "role": sender.get("role"), "profile": profiles.get(sender_id)}
                     if sender_id else None
@@ -130,7 +137,7 @@ class ChatService:
             )
         return sorted(result, key=lambda item: str((item["last_message"] or {}).get("created_at") or ""), reverse=True)
 
-    def send(self, user: dict, request_id: str, payload: dict) -> dict:
+    def send(self, user: dict, request_id: str, payload: dict, *, allow_empty: bool = False) -> dict:
         request = get_required(self.repo, "requests", request_id)
         self._require_chat_available(request)
         chat = self._chat(request)
@@ -138,7 +145,7 @@ class ChatService:
         if user["role"] == "admin":
             raise HTTPException(status_code=403, detail="Администратор не может писать в чате заявки")
         text = payload["text"].strip()
-        if not text:
+        if not text and not allow_empty:
             raise HTTPException(status_code=400, detail="Сообщение не может быть пустым")
         reply_to = payload.get("reply_to")
         if reply_to:

@@ -144,10 +144,45 @@ def test_corrupt_supported_file_is_rejected(monkeypatch) -> None:
     assert response.json()["reasonCode"] == "INVALID_PDF"
 
 
-def test_standalone_archives_are_not_allowed(monkeypatch) -> None:
+def test_standalone_archives_are_allowed(monkeypatch) -> None:
     patch_scanner(monkeypatch)
     response = client.post(VALIDATE_URL, files={"file": ("archive.zip", office_bytes(("x", "y")), "application/zip")})
-    assert response.json()["reasonCode"] == "FILE_TYPE_NOT_ALLOWED"
+    assert response.json()["valid"] is True
+    assert response.json()["detectedMimeType"] == "application/zip"
+
+    windows_mime_response = client.post(
+        VALIDATE_URL,
+        files={"file": ("archive.zip", office_bytes(("x", "y")), "application/x-zip-compressed")},
+    )
+    assert windows_mime_response.json()["valid"] is True
+
+
+def test_zip_is_detected_when_libmagic_returns_generic_binary(monkeypatch) -> None:
+    class GenericBinaryMagic:
+        @staticmethod
+        def from_buffer(*_args, **_kwargs) -> str:
+            return "application/octet-stream"
+
+    monkeypatch.setattr(scanner_module, "magic_lib", GenericBinaryMagic())
+    patch_scanner(monkeypatch)
+    response = client.post(VALIDATE_URL, files={"file": ("archive.zip", office_bytes(("x", "y")), "application/zip")})
+
+    assert response.json()["valid"] is True
+    assert response.json()["detectedMimeType"] == "application/zip"
+
+
+def test_unsafe_or_corrupted_archives_are_rejected(monkeypatch) -> None:
+    patch_scanner(monkeypatch)
+    unsafe = client.post(
+        VALIDATE_URL,
+        files={"file": ("unsafe.zip", office_bytes(("../evil.txt", "x")), "application/zip")},
+    )
+    corrupted = client.post(
+        VALIDATE_URL,
+        files={"file": ("broken.zip", b"PK\x03\x04broken", "application/zip")},
+    )
+    assert unsafe.json()["reasonCode"] == "INVALID_ARCHIVE"
+    assert corrupted.json()["reasonCode"] == "INVALID_ARCHIVE"
 
 
 def test_office_zip_slip_and_macro_payloads_are_rejected(monkeypatch) -> None:

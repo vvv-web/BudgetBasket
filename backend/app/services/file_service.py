@@ -21,6 +21,8 @@ if TYPE_CHECKING:
 
 
 SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+MIME_TYPE_ALIASES = {"application/x-zip-compressed": "application/zip"}
+CHAT_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 
 
 class FileService:
@@ -39,12 +41,14 @@ class FileService:
     def safe_original_name(original_name: str) -> str:
         return SAFE_NAME_RE.sub("_", original_name.strip()).strip("._") or "file"
 
-    def storage_key(self, original_name: str) -> str:
-        return f"request-items/{uuid4()}-{self.safe_original_name(original_name)}"
+    def storage_key(self, original_name: str, *, prefix: str = "request-items") -> str:
+        return f"{prefix}/{uuid4()}-{self.safe_original_name(original_name)}"
 
     def _allowed_mime(self, original_name: str, content_type: str | None) -> str:
         expected, _ = mimetypes.guess_type(original_name)
+        expected = MIME_TYPE_ALIASES.get(expected or "", expected)
         actual = (content_type or expected or "application/octet-stream").split(";")[0]
+        actual = MIME_TYPE_ALIASES.get(actual, actual)
         if actual not in self.settings.allowed_upload_mime_types:
             raise HTTPException(status_code=400, detail="Неподдерживаемый тип файла")
         if expected and actual != expected:
@@ -57,16 +61,18 @@ class FileService:
         if len(content) > self.settings.max_upload_file_size_mb * 1024 * 1024:
             raise HTTPException(status_code=400, detail="Файл превышает допустимый размер")
 
-    async def _upload(self, upload: UploadFile) -> dict:
+    async def _upload(self, upload: UploadFile, *, prefix: str = "request-items", images_only: bool = False) -> dict:
         validation = await require_valid_file(self.file_guard, upload)
         original_name = upload.filename or "file"
         content = await upload.read()
         self._validate_content(content)
         mime_type = self._allowed_mime(original_name, validation.detected_mime_type)
+        if images_only and mime_type not in CHAT_IMAGE_MIME_TYPES:
+            raise HTTPException(status_code=400, detail="В чат можно прикреплять только изображения PNG, JPEG, GIF или WebP")
         digest = hashlib.sha256(content).hexdigest()
         storage = next((entry for entry in self.repo.load_all("storage_objects") if entry["content_sha256"] == digest), None)
         if not storage:
-            key = self.storage_key(original_name)
+            key = self.storage_key(original_name, prefix=prefix)
             self.object_storage.put_object(key, content, mime_type)
             storage = self.repo.create("storage_objects", {"storage_bucket": self.settings.s3_bucket if self.settings.use_s3 else "local", "storage_key": key, "content_sha256": digest, "mime_type": mime_type, "size_bytes": len(content)})
         return self.repo.create("files", {"id_storage_object": storage["id"], "original_name": original_name})
@@ -88,6 +94,38 @@ class FileService:
                 entity="file",
                 entity_id=str(file["id"]),
                 after={"name": file["original_name"], "item_id": item["id"]},
+            )
+        return file
+
+    async def validate_chat_images(self, uploads: list[UploadFile]) -> None:
+        """Reject invalid attachments before creating a chat message."""
+        for upload in uploads:
+            validation = await require_valid_file(self.file_guard, upload)
+            original_name = upload.filename or "file"
+            content = await upload.read()
+            self._validate_content(content)
+            mime_type = self._allowed_mime(original_name, validation.detected_mime_type)
+            if mime_type not in CHAT_IMAGE_MIME_TYPES:
+                raise HTTPException(status_code=400, detail="В чат можно прикреплять только изображения PNG, JPEG, GIF или WebP")
+            await upload.seek(0)
+
+    async def upload_for_chat_message(self, user: dict, request_id: str, message_id: str, upload: UploadFile) -> dict:
+        request = get_required(self.repo, "requests", request_id)
+        message = get_required(self.repo, "chat_messages", message_id)
+        chat = get_required(self.repo, "req_chats", message["chat_id"])
+        if chat.get("req_id") != request["id"] or message.get("sender_id") != user["id"]:
+            raise HTTPException(status_code=403, detail="Нельзя прикрепить изображение к этому сообщению")
+        self.permissions.require_chat_access(user, request, write=True)
+        file = await self._upload(upload, prefix="chat-images", images_only=True)
+        self.repo.insert("message_files", {"file_id": file["id"], "message_id": message_id})
+        if self.request_service:
+            self.request_service.log(
+                user,
+                request_id,
+                "chat_image_attached",
+                entity="file",
+                entity_id=str(file["id"]),
+                after={"name": file["original_name"], "message_id": message_id},
             )
         return file
 
@@ -117,7 +155,7 @@ class FileService:
                 entity_id=str(file_id),
                 before={"name": file["original_name"], "item_id": item["id"]},
             )
-        if any(link.get("file_id") == file_id for link in self.repo.load_all("req_item_files")):
+        if self._file_has_links(file_id):
             return
         storage_id = file["id_storage_object"]
         self.repo.delete("files", file_id)
@@ -129,7 +167,12 @@ class FileService:
                 pass
             self.repo.delete("storage_objects", storage_id)
 
-    def _request_for_file(self, file_id: str | int) -> list[dict]:
+    def _file_has_links(self, file_id: str | int) -> bool:
+        return any(link.get("file_id") == file_id for link in self.repo.load_all("req_item_files")) or any(
+            link.get("file_id") == file_id for link in self.repo.load_all("message_files")
+        )
+
+    def _requests_for_file(self, file_id: str | int) -> list[dict]:
         file_id = int(file_id) if str(file_id).isdigit() else file_id
         requests = []
         for link in self.repo.load_all("req_item_files"):
@@ -137,10 +180,17 @@ class FileService:
                 item = self.repo.get_by_id("req_items", link["req_item_id"])
                 if item:
                     requests.append(get_required(self.repo, "requests", item["request_id"]))
+        chats = {chat["id"]: chat for chat in self.repo.load_all("req_chats")}
+        messages = {message["id"]: message for message in self.repo.load_all("chat_messages")}
+        for link in self.repo.load_all("message_files"):
+            message = messages.get(link.get("message_id"))
+            chat = chats.get(message.get("chat_id")) if message else None
+            if link.get("file_id") == file_id and chat:
+                requests.append(get_required(self.repo, "requests", chat["req_id"]))
         return requests
 
     def require_file_access(self, user: dict, file_id: str | int) -> None:
-        linked = self._request_for_file(file_id)
+        linked = self._requests_for_file(file_id)
         if user["role"] == "admin":
             return
         if not linked or not any(self.permissions.can_view_request(user, request) for request in linked):
