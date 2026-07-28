@@ -27,7 +27,16 @@ docker compose up -d
 docker compose down
 ```
 
-## Проверка готовности сервисов
+## Production (VPS + nginx)
+
+На тестовом FQDN `budgetbasket.acom-offer-desk.ru` API и WebSocket идут через префикс `/api` (см. `deploy/nginx/`). В `.env` на сервере:
+
+```bash
+VITE_API_URL=/api
+```
+
+После изменения — пересоздать frontend: `docker compose up -d --force-recreate frontend`. Nginx: `deploy/vps/apply-nginx.sh`.
+
 
 ```powershell
 docker compose exec postgres pg_isready -U budgetbasket -d budgetbasket
