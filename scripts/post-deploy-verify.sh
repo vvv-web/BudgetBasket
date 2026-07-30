@@ -1,26 +1,42 @@
 #!/usr/bin/env bash
 # Post-deploy smoke for BudgetBasket TEST contour (SE 2.0: verify-first).
-# Usage (on VPS or from CI after SSH):
-#   BUDGETBASKET_FQDN=budgetbasket.acom-offer-desk.ru bash scripts/post-deploy-verify.sh
+# Retries briefly: compose just started → nginx may 502 until backend is up.
 set -euo pipefail
 
 FQDN="${BUDGETBASKET_FQDN:-budgetbasket.acom-offer-desk.ru}"
 BASE="https://${FQDN}"
-# Fail-closed timeouts (seconds)
-CURL=(curl -fsS --connect-timeout 10 --max-time 30)
+ATTEMPTS="${POST_DEPLOY_ATTEMPTS:-30}"
+SLEEP_SEC="${POST_DEPLOY_SLEEP_SEC:-3}"
 
-echo "POST_DEPLOY_VERIFY fqdn=${FQDN}"
+echo "POST_DEPLOY_VERIFY fqdn=${FQDN} attempts=${ATTEMPTS}"
 
-# App health (backend via public URL if exposed; nginx maps /api/* → backend /*)
-"${CURL[@]}" "${BASE}/api/health" | tee /tmp/bb-health.json >/dev/null
-echo "OK /api/health"
+wait_url() {
+  local url="$1"
+  local name="$2"
+  local i=1
+  local code body
+  while (( i <= ATTEMPTS )); do
+    code="$(curl -sS -o /tmp/bb-smoke-body -w '%{http_code}' --connect-timeout 10 --max-time 30 "${url}" || true)"
+    if [[ "${code}" == "200" ]]; then
+      echo "OK ${name} → HTTP ${code} (try ${i})"
+      return 0
+    fi
+    echo "wait ${name} try ${i}/${ATTEMPTS} → HTTP ${code:-curl-fail}"
+    sleep "${SLEEP_SEC}"
+    i=$((i + 1))
+  done
+  echo "FAIL ${name} after ${ATTEMPTS} tries" >&2
+  if [[ -f /tmp/bb-smoke-body ]]; then
+    head -c 400 /tmp/bb-smoke-body >&2 || true
+    echo >&2
+  fi
+  return 1
+}
 
-# DB health through same API prefix
-"${CURL[@]}" "${BASE}/api/health/db" | tee /tmp/bb-health-db.json >/dev/null
-echo "OK /api/health/db"
+wait_url "${BASE}/api/health" "/api/health"
+wait_url "${BASE}/api/health/db" "/api/health/db"
 
-# SPA / origin reachable (expect HTML or redirect handled by -f for 2xx/3xx? -f fails on 3xx... use -L)
-code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 30 -L "${BASE}/")"
+code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 30 -L "${BASE}/" || true)"
 case "${code}" in
   200) echo "OK / → HTTP ${code}" ;;
   *)
