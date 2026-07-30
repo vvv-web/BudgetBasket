@@ -1,6 +1,7 @@
 # Auto-sync fork main from alexonderia/BudgetBasket.
 # Canon: GitHub Docs — Syncing a fork + Actions on.schedule (must live on default branch).
 # Local pattern: vvv-web/agent + vvv-web/KubeDiagrams sync-upstream.yml
+# Does NOT deploy: Deploy test is workflow_dispatch-only (manual). Sync may trigger CI only.
 name: Sync fork from upstream
 
 on:

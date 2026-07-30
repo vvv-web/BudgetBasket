@@ -1,0 +1,103 @@
+# Manual deploy to BudgetBasket TEST on acom-VPS.
+# Best practices (GitHub docs): workflow_dispatch + environment + concurrency + smoke after deploy.
+# SE 2.0: no VPS mutate without green CI for the chosen SHA; post-deploy gate required.
+# Sync-upstream push to main does NOT start this workflow (no push / workflow_run triggers).
+name: Deploy test
+
+on:
+  workflow_dispatch:
+    inputs:
+      git_ref:
+        description: "Git ref to deploy (branch, tag, or SHA). Default: main"
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: deploy-budgetbasket-test
+  cancel-in-progress: false
+
+jobs:
+  gate-ci:
+    name: Require green CI
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.git_ref }}
+          fetch-depth: 0
+
+      - name: Resolve SHA
+        id: resolve
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          echo "sha=${SHA}" >> "${GITHUB_OUTPUT}"
+          echo "Deploy candidate SHA=${SHA} ref=${{ inputs.git_ref }}"
+
+      - name: Fail if no successful CI run for this SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SHA="${{ steps.resolve.outputs.sha }}"
+          # Official Actions API: list workflow runs filtered by head_sha
+          # https://docs.github.com/en/rest/actions/workflow-runs
+          mapfile -t RUNS < <(
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=30" \
+              --jq '.workflow_runs[] | select(.conclusion=="success" and .status=="completed") | [.id,.html_url] | @tsv'
+          )
+          if [[ "${#RUNS[@]}" -eq 0 ]]; then
+            echo "::error::No successful CI run for SHA ${SHA}. Wait for CI on this commit, then Run workflow again."
+            echo "Tip: push/sync must finish workflow «CI» green first (SE 2.0 / no deploy without CI)."
+            exit 1
+          fi
+          echo "CI_GATE_PASS"
+          printf '%s\n' "${RUNS[@]}" | head -3
+
+  deploy:
+    name: Deploy to VPS + smoke
+    needs: gate-ci
+    runs-on: ubuntu-latest
+    environment:
+      name: test
+      url: https://budgetbasket.acom-offer-desk.ru/
+    steps:
+      - name: Deploy context
+        run: |
+          echo "SHA=${{ needs.gate-ci.outputs.sha }}"
+          echo "REF=${{ inputs.git_ref }}"
+          echo "Manual deploy only (workflow_dispatch) — sync-upstream cannot start this job."
+
+      - name: SSH update + post-deploy verify
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_SSH_HOST }}
+          username: ${{ secrets.DEPLOY_SSH_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: 22
+          command_timeout: 25m
+          script: |
+            set -euo pipefail
+            SHA="${{ needs.gate-ci.outputs.sha }}"
+            ROOT="${DEPLOY_PATH:-/opt/budgetbasket}"
+            export BUDGETBASKET_ENV_FILE="${BUDGETBASKET_ENV_FILE:-/etc/budgetbasket/.env}"
+            export BUDGETBASKET_FQDN="${BUDGETBASKET_FQDN:-budgetbasket.acom-offer-desk.ru}"
+
+            cd "${ROOT}"
+            git remote get-url origin >/dev/null
+            git fetch --prune origin
+            git checkout --detach "${SHA}"
+            # Ensure scripts from this SHA are executable
+            chmod +x deploy/vps/remote-update.sh scripts/post-deploy-verify.sh
+            bash deploy/vps/remote-update.sh
+            bash scripts/post-deploy-verify.sh
+            echo "DEPLOY_JOB_PASS SHA=$(git rev-parse HEAD)"
