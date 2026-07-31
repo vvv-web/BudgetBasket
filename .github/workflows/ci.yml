@@ -1,6 +1,5 @@
 # Continuous Integration for BudgetBasket (fork ops).
-# Canon: project COMMANDS.md / scripts/test-all.ps1 + GitHub Actions CI practices.
-# Runs on every push to main (including daily sync-upstream). Does NOT deploy.
+# Runs on push/PR to main and workflow_dispatch (sync PR branch). Does NOT deploy.
 name: CI
 
 on:
