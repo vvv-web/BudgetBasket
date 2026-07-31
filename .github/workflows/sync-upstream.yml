@@ -60,7 +60,7 @@ jobs:
           PR_NUMBER="$(
             gh pr list \
               --repo "${GITHUB_REPOSITORY}" \
-              --head "${GITHUB_REPOSITORY_OWNER}:${SYNC_BRANCH}" \
+              --head "${SYNC_BRANCH}" \
               --base main \
               --state open \
               --json number \
