@@ -49,15 +49,33 @@ jobs:
           SHA="${{ steps.resolve.outputs.sha }}"
           # Official Actions API: require completed success for exact candidate SHA.
           # https://docs.github.com/en/rest/actions/workflow-runs
-          RUN_ID="$(
+          # Latest completed CI for this SHA must be success (old green + newer fail must block).
+          RUN_JSON="$(
             gh api \
               -H "Accept: application/vnd.github+json" \
-              "/repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=100" \
-              | jq -r --arg sha "${SHA}" \
-                '[.workflow_runs[] | select(.head_sha == $sha and .status == "completed" and .conclusion == "success")][0].id // empty'
+              "/repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=100"
+          )"
+          RUN_ID="$(
+            printf '%s' "${RUN_JSON}" | jq -r --arg sha "${SHA}" '
+              [.workflow_runs[]
+                | select(.head_sha == $sha and .status == "completed")]
+              | sort_by(.created_at)
+              | reverse
+              | .[0]
+              | select(.conclusion == "success")
+              | .id // empty'
           )"
           if [[ -z "${RUN_ID}" ]]; then
-            echo "::error::No successful CI run for SHA ${SHA}. Wait for CI on this commit, then run Deploy test again."
+            LATEST="$(
+              printf '%s' "${RUN_JSON}" | jq -r --arg sha "${SHA}" '
+                [.workflow_runs[]
+                  | select(.head_sha == $sha and .status == "completed")]
+                | sort_by(.created_at)
+                | reverse
+                | .[0]
+                | "\(.id // "none") \(.conclusion // "none")"'
+            )"
+            echo "::error::Latest CI for SHA ${SHA} is not success (latest: ${LATEST}). Wait for green CI, then run Deploy test again."
             echo "Tip: push/sync must finish workflow «CI» green first (SE 2.0 / no deploy without CI)."
             exit 1
           fi

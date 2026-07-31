@@ -20,6 +20,15 @@ EOF
 bash "${ROOT}/deploy/vps/verify-env.sh" "${tmp}" >/dev/null \
   || fail "valid production env rejected"
 
+cat >"${tmp}" <<'EOF'
+VITE_API_URL=/api
+ALLOWED_UPLOAD_MIME_TYPES=application/pdf, application/zip
+FILE_GUARD_ALLOWED_EXTENSIONS=.pdf, .zip
+FILE_GUARD_ALLOWED_MIME_TYPES=application/pdf, application/zip
+EOF
+bash "${ROOT}/deploy/vps/verify-env.sh" "${tmp}" >/dev/null \
+  || fail "CSV with spaces after commas rejected"
+
 printf '%s\n' \
   'VITE_API_URL=/api' \
   'ALLOWED_UPLOAD_MIME_TYPES=application/pdf' \

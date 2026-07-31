@@ -45,7 +45,8 @@ require_contains() {
   local key="$1"
   local required="$2"
   local actual
-  actual="$(env_value "${key}")"
+  # CSV may contain spaces after commas; ignore whitespace for membership.
+  actual="$(env_value "${key}" | tr -d '[:space:]')"
   if [[ ",${actual}," != *",${required},"* ]]; then
     echo "FAIL: ${key} must contain ${required}" >&2
     exit 1
