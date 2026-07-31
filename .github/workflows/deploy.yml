@@ -112,10 +112,14 @@ jobs:
 
             cd "${ROOT}"
             origin_url="$(git remote get-url origin)"
-            if [[ "${origin_url}" != *"github.com/vvv-web/BudgetBasket"* ]]; then
-              echo "FAIL: origin must point to vvv-web/BudgetBasket, got ${origin_url}" >&2
-              exit 1
-            fi
+            # Accept HTTPS (.../BudgetBasket.git) and SSH (git@github.com:vvv-web/BudgetBasket.git).
+            case "${origin_url}" in
+              *github.com/vvv-web/BudgetBasket*|*github.com:vvv-web/BudgetBasket*) ;;
+              *)
+                echo "FAIL: origin must point to vvv-web/BudgetBasket, got ${origin_url}" >&2
+                exit 1
+                ;;
+            esac
             if [[ -n "$(git status --porcelain)" ]]; then
               echo "FAIL: VPS checkout is dirty; refusing to overwrite manual changes" >&2
               git status --short
