@@ -47,21 +47,39 @@ jobs:
         run: |
           set -euo pipefail
           SHA="${{ steps.resolve.outputs.sha }}"
-          # Official Actions API: list workflow runs filtered by head_sha
+          # Official Actions API: require completed success for exact candidate SHA.
           # https://docs.github.com/en/rest/actions/workflow-runs
-          mapfile -t RUNS < <(
+          # Latest completed CI for this SHA must be success (old green + newer fail must block).
+          RUN_JSON="$(
             gh api \
               -H "Accept: application/vnd.github+json" \
-              "/repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=30" \
-              --jq '.workflow_runs[] | select(.conclusion=="success" and .status=="completed") | [.id,.html_url] | @tsv'
-          )
-          if [[ "${#RUNS[@]}" -eq 0 ]]; then
-            echo "::error::No successful CI run for SHA ${SHA}. Wait for CI on this commit, then Run workflow again."
+              "/repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=100"
+          )"
+          RUN_ID="$(
+            printf '%s' "${RUN_JSON}" | jq -r --arg sha "${SHA}" '
+              [.workflow_runs[]
+                | select(.head_sha == $sha and .status == "completed")]
+              | sort_by(.created_at)
+              | reverse
+              | .[0]
+              | select(.conclusion == "success")
+              | .id // empty'
+          )"
+          if [[ -z "${RUN_ID}" ]]; then
+            LATEST="$(
+              printf '%s' "${RUN_JSON}" | jq -r --arg sha "${SHA}" '
+                [.workflow_runs[]
+                  | select(.head_sha == $sha and .status == "completed")]
+                | sort_by(.created_at)
+                | reverse
+                | .[0]
+                | "\(.id // "none") \(.conclusion // "none")"'
+            )"
+            echo "::error::Latest CI for SHA ${SHA} is not success (latest: ${LATEST}). Wait for green CI, then run Deploy test again."
             echo "Tip: push/sync must finish workflow «CI» green first (SE 2.0 / no deploy without CI)."
             exit 1
           fi
-          echo "CI_GATE_PASS"
-          printf '%s\n' "${RUNS[@]}" | head -3
+          echo "CI_GATE_PASS run_id=${RUN_ID} sha=${SHA}"
 
   deploy:
     name: Deploy to VPS + smoke
@@ -93,11 +111,28 @@ jobs:
             export BUDGETBASKET_FQDN="${BUDGETBASKET_FQDN:-budgetbasket.acom-offer-desk.ru}"
 
             cd "${ROOT}"
-            git remote get-url origin >/dev/null
+            origin_url="$(git remote get-url origin)"
+            # Accept HTTPS (.../BudgetBasket.git) and SSH (git@github.com:vvv-web/BudgetBasket.git).
+            case "${origin_url}" in
+              *github.com/vvv-web/BudgetBasket*|*github.com:vvv-web/BudgetBasket*) ;;
+              *)
+                echo "FAIL: origin must point to vvv-web/BudgetBasket, got ${origin_url}" >&2
+                exit 1
+                ;;
+            esac
+            if [[ -n "$(git status --porcelain)" ]]; then
+              echo "FAIL: VPS checkout is dirty; refusing to overwrite manual changes" >&2
+              git status --short
+              exit 1
+            fi
             git fetch --prune origin
+            git cat-file -e "${SHA}^{commit}"
             git checkout --detach "${SHA}"
-            # Ensure scripts from this SHA are executable
-            chmod +x deploy/vps/remote-update.sh scripts/post-deploy-verify.sh
             bash deploy/vps/remote-update.sh
             bash scripts/post-deploy-verify.sh
+            if [[ -n "$(git status --porcelain)" ]]; then
+              echo "FAIL: deploy changed tracked files in checkout" >&2
+              git status --short
+              exit 1
+            fi
             echo "DEPLOY_JOB_PASS SHA=$(git rev-parse HEAD)"

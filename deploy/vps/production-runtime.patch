@@ -1,0 +1,45 @@
+diff --git a/backend/app/factory.py b/backend/app/factory.py
+--- a/backend/app/factory.py
++++ b/backend/app/factory.py
+@@ -73,7 +73,7 @@ def create_app(*, repository: Repository | None = None, settings: Settings | Non
+     app.state.excel_service = ExcelService(repository, permissions, request_service, app.state.file_service, export_dir, file_guard)
+     app.add_middleware(
+         CORSMiddleware,
+-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
++        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "https://budgetbasket.acom-offer-desk.ru", "http://budgetbasket.acom-offer-desk.ru"],
+         allow_credentials=True,
+         allow_methods=["*"],
+         allow_headers=["*"],
+diff --git a/docker-compose.yml b/docker-compose.yml
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -141,6 +141,7 @@ services:
+       - "${FRONTEND_HOST_PORT}:${FRONTEND_PORT}"
+     environment:
+       VITE_API_URL: ${VITE_API_URL}
++      __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: budgetbasket.acom-offer-desk.ru
+     depends_on:
+       - backend
+     networks:
+diff --git a/frontend/vite.config.js b/frontend/vite.config.js
+--- a/frontend/vite.config.js
++++ b/frontend/vite.config.js
+@@ -5,6 +5,7 @@ export default defineConfig({
+     plugins: [react(), tailwindcss()],
+     server: {
+         port: 5173,
++    allowedHosts: ["budgetbasket.acom-offer-desk.ru", "localhost"],
+     },
+     test: {
+         environment: 'jsdom',
+diff --git a/frontend/vite.config.ts b/frontend/vite.config.ts
+--- a/frontend/vite.config.ts
++++ b/frontend/vite.config.ts
+@@ -6,6 +6,7 @@ export default defineConfig({
+   plugins: [react(), tailwindcss()],
+   server: {
+     port: 5173,
++    allowedHosts: ["budgetbasket.acom-offer-desk.ru", "localhost"],
+   },
+   test: {
+     environment: 'jsdom',
