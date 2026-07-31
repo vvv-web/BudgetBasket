@@ -23,6 +23,8 @@ echo "TARGET_SHA=$(git rev-parse HEAD)"
 
 # Soft guard: warn if .env.example has keys missing from live env (ZIP allowlist class of bugs)
 if [[ -f "${ROOT}/.env.example" ]]; then
+  # Root .env.example is Sasha's local-development template.
+  # Production invariants are checked by deploy/vps/verify-env.sh.
   missing=0
   while IFS= read -r line; do
     [[ "${line}" =~ ^[[:space:]]*# ]] && continue
@@ -40,6 +42,26 @@ if [[ -f "${ROOT}/.env.example" ]]; then
   fi
 fi
 
+bash "${ROOT}/deploy/vps/verify-env.sh" "${ENV_FILE}"
+
+PATCH_FILE="${ROOT}/deploy/vps/production-runtime.patch"
+patch_applied=0
+cleanup_runtime_patch() {
+  if (( patch_applied == 1 )); then
+    if ! git apply --reverse --check "${PATCH_FILE}" \
+      || ! git apply --reverse "${PATCH_FILE}"; then
+      echo "FAIL: could not remove production runtime patch" >&2
+      return 1
+    fi
+    echo "OK production runtime patch removed from checkout"
+  fi
+}
+trap cleanup_runtime_patch EXIT
+
+git apply --check "${PATCH_FILE}"
+git apply "${PATCH_FILE}"
+patch_applied=1
+echo "OK production runtime patch applied for compose build"
 docker compose --env-file "${ENV_FILE}" up -d --build
 
 echo "REMOTE_UPDATE_DONE SHA=$(git rev-parse HEAD)"

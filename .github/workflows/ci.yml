@@ -8,6 +8,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -94,3 +95,16 @@ jobs:
       # MBO / goal gate: npm build. Vitest has upstream drift (roles.test vs roles.ts) — not fixed here (app owner).
       - name: production build
         run: npm run build
+  deployment-guards:
+    name: Deployment guards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: bash -n deploy/vps/verify-env.sh deploy/vps/remote-update.sh scripts/post-deploy-verify.sh scripts/selfcheck_deploy_env.sh scripts/selfcheck_vite_api_env.sh
+      - name: Production runtime patch applies
+        run: git apply --check deploy/vps/production-runtime.patch
+      - name: Environment contract self-check
+        run: bash scripts/selfcheck_deploy_env.sh
+      - name: Vite API self-check
+        run: bash scripts/selfcheck_vite_api_env.sh
