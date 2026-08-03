@@ -37,14 +37,7 @@ wait_url() {
 wait_url "${BASE}/api/health" "/api/health"
 wait_url "${BASE}/api/health/db" "/api/health/db"
 
-code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 30 -L "${BASE}/" || true)"
-case "${code}" in
-  200) echo "OK / → HTTP ${code}" ;;
-  *)
-    echo "FAIL / → HTTP ${code}" >&2
-    exit 1
-    ;;
-esac
+wait_url "${BASE}/" "/"
 
 # Login must work via /api (incident 2026-07-31: VITE_API_URL without /api → UI 404)
 login_code="$(curl -sS -o /tmp/bb-smoke-login -w '%{http_code}' --connect-timeout 10 --max-time 30 \
