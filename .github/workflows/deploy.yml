@@ -1,14 +1,18 @@
-# Manual deploy to BudgetBasket TEST on acom-VPS.
-# Best practices (GitHub docs): workflow_dispatch + environment + concurrency + smoke after deploy.
+# Deploy BudgetBasket TEST on acom-VPS after green CI.
+# Best practices (GitHub docs): workflow_run + environment + concurrency + smoke after deploy.
 # SE 2.0: no VPS mutate without green CI for the chosen SHA; post-deploy gate required.
-# Sync-upstream push to main does NOT start this workflow (no push / workflow_run triggers).
+# Sync-upstream PR does not deploy; merge to main, then successful push CI may deploy.
 name: Deploy test
 
 on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       git_ref:
-        description: "Git ref to deploy (branch, tag, or SHA). Default: main"
+        description: "Manual ref for rerun, rollback, or approved recovery"
         required: true
         default: main
         type: string
@@ -24,13 +28,23 @@ concurrency:
 jobs:
   gate-ci:
     name: Require green CI
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.conclusion == 'success'
+      )
     runs-on: ubuntu-latest
+    env:
+      DEPLOY_REF: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.git_ref }}
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.git_ref }}
+          ref: ${{ env.DEPLOY_REF }}
           fetch-depth: 0
 
       - name: Resolve SHA
@@ -39,7 +53,7 @@ jobs:
           set -euo pipefail
           SHA="$(git rev-parse HEAD)"
           echo "sha=${SHA}" >> "${GITHUB_OUTPUT}"
-          echo "Deploy candidate SHA=${SHA} ref=${{ inputs.git_ref }}"
+          echo "Deploy candidate SHA=${SHA} ref=${DEPLOY_REF} trigger=${{ github.event_name }}"
 
       - name: Fail if no successful CI run for this SHA
         env:
@@ -84,6 +98,7 @@ jobs:
   deploy:
     name: Deploy to VPS + smoke
     needs: gate-ci
+    if: needs.gate-ci.result == 'success'
     runs-on: ubuntu-latest
     environment:
       name: test
@@ -92,8 +107,9 @@ jobs:
       - name: Deploy context
         run: |
           echo "SHA=${{ needs.gate-ci.outputs.sha }}"
-          echo "REF=${{ inputs.git_ref }}"
-          echo "Manual deploy only (workflow_dispatch) — sync-upstream cannot start this job."
+          echo "TRIGGER=${{ github.event_name }}"
+          echo "Automatic path: successful CI workflow_run on push to main."
+          echo "Manual path: workflow_dispatch for rerun, rollback, or approved recovery."
 
       - name: SSH update + post-deploy verify
         uses: appleboy/ssh-action@v1.2.0
