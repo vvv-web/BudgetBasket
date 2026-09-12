@@ -11,6 +11,7 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { FormEvent, useState } from 'react';
 import { api } from '../api/client';
+import { AppFooter } from '../components/AppFooter';
 import type { User } from '../types';
 
 export default function LoginPage({ onLogin }: { onLogin: (token: string, user: User) => void }) {
@@ -32,7 +33,8 @@ export default function LoginPage({ onLogin }: { onLogin: (token: string, user: 
 
   return (
     <Box className="login-page">
-      <Paper component="form" onSubmit={submit} elevation={0} className="login-card">
+      <Box className="login-content">
+        <Paper component="form" onSubmit={submit} elevation={0} className="login-card">
         <Stack spacing={2.75}>
           <Stack spacing={2}>
             <Stack direction="row" spacing={1.5} alignItems="center">
@@ -76,7 +78,9 @@ export default function LoginPage({ onLogin }: { onLogin: (token: string, user: 
             Демо-доступ: admin/admin · economist/economist · employee/employee
           </Typography>
         </Stack>
-      </Paper>
+        </Paper>
+      </Box>
+      <AppFooter />
     </Box>
   );
 }

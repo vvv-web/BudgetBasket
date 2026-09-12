@@ -118,6 +118,15 @@ type UseTableColumnControlsOptions<T, K extends string> = {
   rows: T[];
   columns: TableColumnDefinition<T, K>[];
   initialSort?: TableSortState<K>;
+  remoteOptions?: Partial<Record<K, TableFilterOption[]>>;
+  adjustFilterSelection?: (context: {
+    columnId: K;
+    optionValue: string;
+    currentValues: string[] | null;
+    nextValues: string[];
+    availableValues: string[];
+    rows: T[];
+  }) => string[] | undefined;
 };
 
 const EMPTY_FILTER_VALUE = '__EMPTY__';
@@ -140,6 +149,16 @@ function stringifyFilterValue(value: unknown) {
     return { key: EMPTY_FILTER_VALUE, label: 'Пусто' };
   }
   return { key: String(value), label: String(value) };
+}
+
+function stringifyFilterValues(value: unknown) {
+  const values = Array.isArray(value) ? value : [value];
+  const unique = new Map<string, { key: string; label: string }>();
+  values.forEach((entry) => {
+    const option = stringifyFilterValue(entry);
+    unique.set(option.key, option);
+  });
+  return [...unique.values()];
 }
 
 function buildInitialVisibility<K extends string>(columns: Pick<TableColumnDefinition<unknown, K>, 'id' | 'defaultVisible'>[]) {
@@ -167,6 +186,8 @@ export function useTableColumnControls<T, K extends string>({
   rows,
   columns,
   initialSort = null,
+  remoteOptions,
+  adjustFilterSelection,
 }: UseTableColumnControlsOptions<T, K>) {
   const [sort, setSort] = useState<TableSortState<K>>(initialSort);
   const [visibility, setVisibility] = useState<Record<K, boolean>>(() => buildInitialVisibility(columns));
@@ -187,24 +208,29 @@ export function useTableColumnControls<T, K extends string>({
     if (!column || column.filterable === false) return true;
     const selectedValues = selectedFilterValues[columnId];
     if (!selectedValues || selectedValues.length === 0) return true;
-    const option = stringifyFilterValue(getColumnRawValue(column, row));
-    return selectedValues.includes(option.key);
+    const options = stringifyFilterValues(getColumnRawValue(column, row));
+    return options.some((option) => selectedValues.includes(option.key));
   };
 
   const filterOptions = useMemo(() => {
     return columns.reduce((accumulator, column) => {
       const optionMap = new Map<string, TableFilterOption>();
       const optionSearch = normalizeSearch(filterSearchValues[column.id] || '');
+      if (remoteOptions) {
+        accumulator[column.id] = (remoteOptions[column.id] || []).filter((option) => !optionSearch || option.label.toLocaleLowerCase('ru-RU').includes(optionSearch));
+        return accumulator;
+      }
       const scopedRows = rows.filter((row) => columns.every((candidate) => rowMatchesColumnFilter(row, candidate.id, column.id)));
 
       for (const row of scopedRows) {
-        const option = stringifyFilterValue(getColumnRawValue(column, row));
-        const existing = optionMap.get(option.key);
-        if (existing) {
-          existing.count += 1;
-        } else {
-          optionMap.set(option.key, { value: option.key, label: option.label, count: 1 });
-        }
+        stringifyFilterValues(getColumnRawValue(column, row)).forEach((option) => {
+          const existing = optionMap.get(option.key);
+          if (existing) {
+            existing.count += 1;
+          } else {
+            optionMap.set(option.key, { value: option.key, label: option.label, count: 1 });
+          }
+        });
       }
 
       let options = [...optionMap.values()].sort((left, right) => compareValues(left.label, right.label));
@@ -214,7 +240,7 @@ export function useTableColumnControls<T, K extends string>({
       accumulator[column.id] = options;
       return accumulator;
     }, {} as Record<K, TableFilterOption[]>);
-  }, [columns, columnsById, filterSearchValues, rows, selectedFilterValues]);
+  }, [columns, columnsById, filterSearchValues, rows, selectedFilterValues, remoteOptions]);
 
   const filteredRows = useMemo(
     () => rows.filter((row) => columns.every((column) => rowMatchesColumnFilter(row, column.id))),
@@ -265,28 +291,52 @@ export function useTableColumnControls<T, K extends string>({
 
   const toggleFilterOption = (columnId: K, optionValue: string) => {
     const availableValues = filterOptions[columnId].map((option) => option.value);
+    const scopedRows = rows.filter((row) => columns.every((candidate) => rowMatchesColumnFilter(row, candidate.id, columnId)));
     setSelectedFilterValues((current) => {
       const currentValues = current[columnId];
       const normalizedCurrentValues = currentValues ?? availableValues;
       const nextValues = normalizedCurrentValues.includes(optionValue)
         ? normalizedCurrentValues.filter((value) => value !== optionValue)
         : [...normalizedCurrentValues, optionValue];
+      const adjustedValues = adjustFilterSelection?.({
+        columnId,
+        optionValue,
+        currentValues,
+        nextValues,
+        availableValues,
+        rows: scopedRows,
+      });
+      const resultingValues = adjustedValues === undefined ? nextValues : adjustedValues;
 
-      if (nextValues.length === 0 || nextValues.length === availableValues.length) {
-        return { ...current, [columnId]: null };
+      if (resultingValues.length === 0 || resultingValues.length === availableValues.length) {
+        return { ...current, [columnId]: resultingValues.length === 0 ? [] : null };
       }
-      return { ...current, [columnId]: nextValues };
+      return { ...current, [columnId]: resultingValues };
     });
   };
 
   const setVisibleFilterOptions = (columnId: K, includeAllVisible: boolean) => {
     const visibleOptionValues = filterOptions[columnId].map((option) => option.value);
+    const availableValues = visibleOptionValues;
+    const scopedRows = rows.filter((row) => columns.every((candidate) => rowMatchesColumnFilter(row, candidate.id, columnId)));
     setSelectedFilterValues((current) => {
       const currentValues = current[columnId];
       const normalizedCurrentValues = currentValues ?? filterOptions[columnId].map((option) => option.value);
-      const nextValues = includeAllVisible
+      let nextValues = includeAllVisible
         ? [...new Set([...normalizedCurrentValues, ...visibleOptionValues])]
         : normalizedCurrentValues.filter((value) => !visibleOptionValues.includes(value));
+
+      visibleOptionValues.forEach((optionValue) => {
+        const adjustedValues = adjustFilterSelection?.({
+          columnId,
+          optionValue,
+          currentValues,
+          nextValues,
+          availableValues,
+          rows: scopedRows,
+        });
+        if (adjustedValues !== undefined) nextValues = adjustedValues;
+      });
 
       const allValues = filterOptions[columnId].map((option) => option.value);
       if (nextValues.length === 0 || nextValues.length === allValues.length) {

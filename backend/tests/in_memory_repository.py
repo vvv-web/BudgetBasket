@@ -17,6 +17,7 @@ class InMemoryRepository:
             "storage_objects": 1,
             "req_logs": 1,
             "step_logs": 1,
+            "cfo_position_logs": 1,
         }
 
     def _public_row(self, collection: str, item: dict) -> dict:
@@ -71,16 +72,25 @@ class InMemoryRepository:
     def create(self, collection_name: str, item: dict) -> dict:
         collection = collection_name.removesuffix(".json")
         created = self._normalize_user(item) if collection == "users" else deepcopy(item)
+        if collection == "chats" and any(
+            row.get("kind") == created.get("kind")
+            and str(row.get("unit_id")) == str(created.get("unit_id"))
+            and int(row.get("budget_year")) == int(created.get("budget_year"))
+            for row in self.rows.setdefault(collection, [])
+        ):
+            raise HTTPException(status_code=400, detail="Database constraint violation")
         if "id" not in created:
             if collection in self._next_ids:
                 created["id"] = self._next_ids[collection]
                 self._next_ids[collection] += 1
-            elif collection not in {"profiles", "units_responsibles", "req_item_files", "req_item_month_plans", "message_files", "chats_participants", "step_edges", "request_step_states"}:
+            elif collection not in {"profiles", "units_responsibles", "req_item_files", "req_item_month_plans", "message_files", "chats_participants", "step_edges"}:
                 created["id"] = str(uuid4())
-        if collection == "requests":
+        if collection == "cfo_positions":
+            created.setdefault("status", "waiting")
+        if collection == "req_items":
             created.setdefault("frozen", False)
             created.setdefault("fixed", False)
-        if collection in {"req_logs", "step_logs"}:
+        if collection in {"req_logs", "step_logs", "cfo_position_logs", "notifications"}:
             created.setdefault("created_at", datetime.now(timezone.utc).isoformat())
         self.rows.setdefault(collection, []).append(created)
         return self._public_row(collection, created)

@@ -57,6 +57,12 @@ export const theme = createTheme({
     },
   },
   components: {
+    MuiTooltip: {
+      defaultProps: {
+        arrow: true,
+        enterDelay: 400,
+      },
+    },
     MuiCssBaseline: {
       styleOverrides: {
         body: {

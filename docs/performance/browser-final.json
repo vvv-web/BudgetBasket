@@ -1,0 +1,291 @@
+{
+  "initial_ms": 4677.01,
+  "repeated_navigation_ms": 4623.91,
+  "initial_dom_rows": 3,
+  "expanded_dom_rows": 24,
+  "end_dom_rows": 27,
+  "initial_api_calls": 5,
+  "keyboard_moved": true,
+  "long_tasks_ms": [
+    153,
+    224,
+    112,
+    217,
+    104,
+    319,
+    131,
+    85,
+    902,
+    84,
+    145,
+    85
+  ],
+  "js_resources": [
+    {
+      "name": "index-CFqy3yol.js",
+      "bytes": 779155,
+      "transfer": 289380
+    },
+    {
+      "name": "RequestsPage-D3RKL4Bk.js",
+      "bytes": 27947,
+      "transfer": 10287
+    },
+    {
+      "name": "Add-B2c4hfYO.js",
+      "bytes": 128,
+      "transfer": 428
+    },
+    {
+      "name": "DeleteOutline-5Cm0pqup.js",
+      "bytes": 176,
+      "transfer": 476
+    },
+    {
+      "name": "types-C6xG7J-r.js",
+      "bytes": 25800,
+      "transfer": 9361
+    },
+    {
+      "name": "EditOutlined-Bk8-OoyO.js",
+      "bytes": 281,
+      "transfer": 581
+    },
+    {
+      "name": "analyticsFields-CT-h2_B7.js",
+      "bytes": 902,
+      "transfer": 1202
+    },
+    {
+      "name": "Tabs-f7W4LSNh.js",
+      "bytes": 15762,
+      "transfer": 6230
+    },
+    {
+      "name": "exportSettings-_b1Nj9JG.js",
+      "bytes": 12206,
+      "transfer": 5105
+    },
+    {
+      "name": "FormGroup-Dst3HCwd.js",
+      "bytes": 3250,
+      "transfer": 1767
+    },
+    {
+      "name": "Checkbox-BcLQABMG.js",
+      "bytes": 2782,
+      "transfer": 1588
+    },
+    {
+      "name": "SwitchBase-C_mMcC0_.js",
+      "bytes": 2387,
+      "transfer": 1492
+    },
+    {
+      "name": "StatusBadge-C0e0D7ZR.js",
+      "bytes": 1360,
+      "transfer": 939
+    },
+    {
+      "name": "ConfirmDialog-DijWhKSl.js",
+      "bytes": 1203,
+      "transfer": 1005
+    },
+    {
+      "name": "tableColumns-CIeuVG9f.js",
+      "bytes": 13540,
+      "transfer": 6548
+    },
+    {
+      "name": "responsive-Cu3Cwt9I.js",
+      "bytes": 123,
+      "transfer": 423
+    },
+    {
+      "name": "apiErrors-CrfjBNiz.js",
+      "bytes": 1186,
+      "transfer": 882
+    },
+    {
+      "name": "TableHead-C_ZbpLb3.js",
+      "bytes": 2194,
+      "transfer": 1204
+    },
+    {
+      "name": "ApprovalRegister-CuM2nmWX.js",
+      "bytes": 165572,
+      "transfer": 56386
+    },
+    {
+      "name": "OpenInNew-DlcGI93X.js",
+      "bytes": 215,
+      "transfer": 515
+    },
+    {
+      "name": "registryStatusVisual-CX4QTcdw.js",
+      "bytes": 16169,
+      "transfer": 6001
+    },
+    {
+      "name": "Search-CMS4DSHC.js",
+      "bytes": 315,
+      "transfer": 615
+    },
+    {
+      "name": "workflowPresentation-COyYAtNL.js",
+      "bytes": 26577,
+      "transfer": 8546
+    },
+    {
+      "name": "InlineEditTextCell-By_lIWSL.js",
+      "bytes": 2000,
+      "transfer": 1409
+    },
+    {
+      "name": "ArticleRevisionDialog-C6eaqPoj.js",
+      "bytes": 8309,
+      "transfer": 3825
+    },
+    {
+      "name": "TableContainer-CaMuaxO2.js",
+      "bytes": 544,
+      "transfer": 844
+    },
+    {
+      "name": "dashboardNavigation-C4xONDnO.js",
+      "bytes": 7583,
+      "transfer": 2815
+    },
+    {
+      "name": "FilePreviewDialog-uEVVn_HZ.js",
+      "bytes": 5369,
+      "transfer": 2866
+    },
+    {
+      "name": "Card-BLxkrKVt.js",
+      "bytes": 502,
+      "transfer": 802
+    }
+  ],
+  "requests": [
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200,
+      "bytes": 314,
+      "body": null
+    },
+    {
+      "path": "/chats/unread-count",
+      "method": "GET",
+      "status": 200,
+      "bytes": 18,
+      "body": null
+    },
+    {
+      "path": "/units",
+      "method": "GET",
+      "status": 200,
+      "bytes": 1120,
+      "body": null
+    },
+    {
+      "path": "/approval-register/query",
+      "method": "POST",
+      "status": 200,
+      "bytes": 37621,
+      "body": {
+        "view": "module",
+        "group_by": [
+          "module",
+          "article",
+          "category"
+        ],
+        "filters": {},
+        "columns": {},
+        "sort": null,
+        "mode": "summary"
+      }
+    },
+    {
+      "path": "/approval-register/analytics-filters",
+      "method": "GET",
+      "status": 200,
+      "bytes": 117,
+      "body": null
+    },
+    {
+      "path": "/approval-register/query",
+      "method": "POST",
+      "status": 200,
+      "bytes": 130691,
+      "body": {
+        "view": "module",
+        "group_by": [
+          "module",
+          "article",
+          "category"
+        ],
+        "filters": {},
+        "columns": {},
+        "sort": null,
+        "mode": "rows",
+        "scope": {
+          "module_id": "10000000-0000-0000-0000-000000000002",
+          "article_id": "20000000-0000-0000-0000-000000000001",
+          "category_id": "20000000-0000-0000-0000-000000000002"
+        },
+        "page": 1,
+        "page_size": 50,
+        "include_aggregates": false
+      }
+    },
+    {
+      "path": "/chats/unread-count",
+      "method": "GET",
+      "status": 200,
+      "bytes": 18,
+      "body": null
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "status": 200,
+      "bytes": 314,
+      "body": null
+    },
+    {
+      "path": "/units",
+      "method": "GET",
+      "status": 200,
+      "bytes": 1120,
+      "body": null
+    },
+    {
+      "path": "/approval-register/analytics-filters",
+      "method": "GET",
+      "status": 200,
+      "bytes": 117,
+      "body": null
+    },
+    {
+      "path": "/approval-register/query",
+      "method": "POST",
+      "status": 200,
+      "bytes": 37621,
+      "body": {
+        "view": "module",
+        "group_by": [
+          "module",
+          "article",
+          "category"
+        ],
+        "filters": {},
+        "columns": {},
+        "sort": null,
+        "mode": "summary"
+      }
+    }
+  ],
+  "errors": []
+}

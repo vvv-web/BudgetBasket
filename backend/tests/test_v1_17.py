@@ -29,6 +29,10 @@ def test_request_lines_chat_logs_and_budget_mode(tmp_path):
     assert deleted.json()["status"] == "deleted"
     assert deleted.json()["sum_plan"] == 0
     assert deleted.json()["sum_fact"] == 0
+    assert client.get(f"/requests/{request['id']}/summary", headers=employee).json()["planned_sum"] == 0
+    assert client.get(f"/requests/{request['id']}/items", headers=employee).json()[0]["status"] == "deleted"
+    delete_history = client.get(f"/requests/{request['id']}/logs", headers=employee).json()
+    assert any(entry["log"]["action"] == "line_deleted" for entry in delete_history)
 
     line = client.post(
         f"/requests/{request['id']}/items",
@@ -37,37 +41,34 @@ def test_request_lines_chat_logs_and_budget_mode(tmp_path):
     )
     assert line.status_code == 200
     assert client.post(f"/requests/{request['id']}/submit", headers=employee).status_code == 200
-    logs_before_noop = client.get(f"/requests/{request['id']}/logs", headers=employee).json()
     noop = client.patch(f"/items/{line.json()['id']}", json={"status": "on_review"}, headers=economist)
-    assert noop.status_code == 200
-    logs_after_noop = client.get(f"/requests/{request['id']}/logs", headers=employee).json()
-    assert len(logs_after_noop) == len(logs_before_noop)
+    assert noop.status_code == 403
 
-    removed_by_economist = client.patch(
-        f"/items/{line.json()['id']}",
-        json={"status": "deleted"},
-        headers=economist,
+    rejected_by_cfo = client.post(
+        f"/items/{line.json()['id']}/cfo-decision",
+        json={"decision": "rejected", "comment": "Не входит в бюджет"},
+        headers=employee,
     )
-    assert removed_by_economist.status_code == 200
-    assert removed_by_economist.json()["status"] == "deleted"
-    assert removed_by_economist.json()["sum_plan"] == 0
-    assert removed_by_economist.json()["sum_fact"] == 0
+    assert rejected_by_cfo.status_code == 200
+    assert rejected_by_cfo.json()["status"] == "rejected"
+    assert rejected_by_cfo.json()["sum_fact"] == 0
 
-    sent = client.post(f"/requests/{request['id']}/chat/messages", json={"text": "Нужна консультация"}, headers=employee)
+    chat = client.get(f"/requests/{request['id']}/chat", headers=employee).json()
+    sent = client.post(f"/chats/{chat['id']}/messages", json={"text": "Нужна консультация"}, headers=employee)
     assert sent.status_code == 200
-    chat = client.get(f"/requests/{request['id']}/chat", headers=economist)
+    chat = client.get(f"/requests/{request['id']}/chat", headers=employee)
     assert chat.status_code == 200, chat.json()
-    assert [message["text"] for message in chat.json()["messages"]] == ["Нужна консультация"]
+    assert chat.json()["messages"][-1]["text"] == "Нужна консультация"
     logs = client.get(f"/requests/{request['id']}/logs", headers=employee)
-    assert {entry["log"]["action"] for entry in logs.json()} >= {"created", "line_created", "chat_message_sent"}
-    assert {entry["user"]["login"] for entry in logs.json()} == {"employee", "economist"}
-    assert any(entry["log"]["action"] == "line_deleted" and entry["user"]["login"] == "economist" for entry in logs.json())
+    assert {entry["log"]["action"] for entry in logs.json()} >= {"request_created", "line_created"}
+    assert {entry["user"]["login"] for entry in logs.json()} == {"employee"}
+    assert any(entry["log"]["action"] == "cfo_item_decided" for entry in logs.json())
     line_log = next(entry for entry in logs.json() if entry["log"]["action"] == "line_created")
     assert line_log["subject"] == {
         "type": "request_line",
         "name": line.json()["name"],
-        "article": "Лицензии и подписки",
-        "category": "Операционные расходы",
+        "article": "Операционные расходы",
+        "category": "Лицензии и подписки",
     }
 
 def test_unit_mode_cannot_change_while_active_lines_exist(tmp_path):
@@ -81,12 +82,14 @@ def test_unit_mode_cannot_change_while_active_lines_exist(tmp_path):
         headers=employee,
     )
     assert created.status_code == 200
+    assert client.post(f"/requests/{request['id']}/submit", headers=employee).status_code == 200
     changed = client.patch(
         f"/units/{MODULE_ALPHA_ID}",
         json={"uses_invest_projects": True},
         headers=admin,
     )
-    assert changed.status_code == 400
+    assert changed.status_code == 409
+    assert "уже создана заявка" in changed.json()["detail"]
 
 
 def test_request_line_cannot_use_catalog_entry_from_another_department(tmp_path):

@@ -20,8 +20,6 @@ export const requestStatusLabels: Record<RequestStatus, string> = {
   draft: 'Черновик',
   on_review: 'На проверке',
   approved: 'Утверждена',
-  approved_with_changes: 'Утверждена с изменениями',
-  partially_approved: 'Частично утверждена',
   rejected: 'Отклонена',
   cancelled: 'Отменена',
 };

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from io import BytesIO
+from urllib.parse import quote
 
 import httpx
 import pytest
@@ -66,3 +68,30 @@ def test_client_rejects_malformed_response(monkeypatch) -> None:
 
     with pytest.raises(FileGuardUnavailableError):
         asyncio.run(FileGuardClient(Settings()).validate(upload()))
+
+
+def test_client_decodes_cyrillic_filenames_from_file_guard_headers(monkeypatch) -> None:
+    content = b"safe pdf"
+    original_name = "договор.pdf"
+    output_name = "договор.cleaned.pdf"
+
+    async def fake_post(self, url, uploaded):
+        return httpx.Response(
+            200,
+            content=content,
+            headers={
+                "content-type": "application/pdf",
+                "X-File-Guard-Action": "sanitized",
+                "X-File-Guard-Original-Name": quote(original_name, safe=""),
+                "X-File-Guard-Output-Name": quote(output_name, safe=""),
+                "X-File-Guard-Source-Sha256": "a" * 64,
+                "X-File-Guard-Output-Sha256": hashlib.sha256(content).hexdigest(),
+            },
+        )
+
+    monkeypatch.setattr(FileGuardClient, "_post", fake_post)
+
+    result = asyncio.run(FileGuardClient(Settings()).process(upload()))
+
+    assert result.original_name == original_name
+    assert result.output_name == output_name

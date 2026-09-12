@@ -109,7 +109,8 @@ curl http://localhost:8333
 
 ## Constraints and do-not rules
 
-- No commits unless the user explicitly asks.
+- Never create a Git commit on your own. Commit only when the user explicitly asks for a commit in the current task.
+- After every code, configuration, documentation, or dependency change, always rebuild and restart the project containers with `docker compose up -d --build` before declaring the work complete.
 - Do not use destructive git commands such as `git reset --hard` or `git checkout --`.
 - Do not delete or revert user changes unless the user explicitly requests it.
 - Do not add extra timestamps or schema fields that are not part of the agreed schema.
@@ -122,7 +123,7 @@ curl http://localhost:8333
 
 ## What done means and how to verify work
 
-A change is done only when the implementation, docs, and runtime wiring all agree.
+A change is done only when the implementation, docs, and runtime wiring all agree. The Docker Compose rebuild is mandatory after every repository change, even when narrower local tests have already passed.
 
 Verify at minimum:
 

@@ -54,7 +54,8 @@ else
 fi
 
 echo "[file_guard] Запускаем FastAPI-сервис проверки файлов"
-uvicorn app.main:app --host 0.0.0.0 --port "${FILE_GUARD_PORT:-8080}" &
+# clamd setup/update requires root, but parsing untrusted documents does not.
+su -s /bin/sh clamav -c "exec uvicorn app.main:app --host 0.0.0.0 --port '${FILE_GUARD_PORT:-8080}'" &
 UVICORN_PID="$!"
 
 exit_code=0

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from urllib.parse import quote
 
 from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from .config import settings
 from .scanner import FileScanner, ScanUnavailableError
@@ -30,7 +31,17 @@ _REASON_MESSAGES = {
     "MALWARE_DETECTED": "Файл отклонён антивирусной проверкой.",
     "VALIDATION_UNAVAILABLE": "Проверка файлов временно недоступна.",
     "INTERNAL_ERROR": "Не удалось безопасно проверить файл.",
+    "EXCEL_SANITIZATION_FAILED": "Не удалось безопасно обработать Excel-файл.",
+    "EXCEL_LIMIT_EXCEEDED": "Excel-файл превышает допустимые ограничения для просмотра.",
+    "ENCRYPTED_EXCEL_NOT_ALLOWED": "Зашифрованные Excel-файлы не поддерживаются.",
+    "UNSUPPORTED_EXCEL_FORMAT": "Старый формат Excel .xls не поддерживается. Сохраните файл как .xlsx.",
+    "SANITIZED_FILE_INVALID": "Не удалось подтвердить безопасность обработанного Excel-файла.",
 }
+
+
+def _header_filename(name: str) -> str:
+    """Encode a UTF-8 filename for an HTTP header, which must be ASCII/Latin-1."""
+    return quote(name, safe="")
 
 
 def _response(
@@ -112,3 +123,46 @@ async def validate_file(file: UploadFile = File(...)) -> ValidationResponse | JS
         size_bytes=verdict.size_bytes,
         reason_code=verdict.reason_code,
     )
+
+
+@app.post("/internal/files/process", response_model=None)
+async def process_file(file: UploadFile = File(...)) -> Response:
+    """Return the exact safe bytes the backend is allowed to persist."""
+    content_bytes, exceeded_limit = await _read_upload_bytes(file)
+    if exceeded_limit:
+        return JSONResponse(status_code=400, content=_response(valid=False, size_bytes=len(content_bytes), reason_code="FILE_TOO_LARGE").model_dump(by_alias=True))
+    if (file.filename or "").lower().endswith(".xls"):
+        return JSONResponse(status_code=400, content=_response(valid=False, reason_code="UNSUPPORTED_EXCEL_FORMAT").model_dump(by_alias=True))
+    if settings.require_antivirus and not settings.antivirus_enabled:
+        return _unavailable(503, "VALIDATION_UNAVAILABLE")
+    try:
+        processed = await asyncio.wait_for(
+            asyncio.to_thread(_scanner.process_bytes, original_name=file.filename or "", content_bytes=content_bytes, claimed_mime_type=file.content_type),
+            timeout=settings.scan_timeout_seconds,
+        )
+    except (TimeoutError, ScanUnavailableError):
+        logger.exception("Обработка файла временно недоступна")
+        return _unavailable(503, "VALIDATION_UNAVAILABLE")
+    except ValueError as exc:
+        reason = str(exc).upper()
+        if reason not in _REASON_MESSAGES:
+            reason = "EXCEL_SANITIZATION_FAILED"
+        return JSONResponse(status_code=400, content=_response(valid=False, reason_code=reason).model_dump(by_alias=True))
+    except Exception:
+        logger.exception("Внутренняя ошибка обработки файла")
+        return _unavailable(500, "INTERNAL_ERROR")
+
+    output_name_header = _header_filename(processed.output_name)
+    original_name_header = _header_filename(processed.original_name)
+    headers = {
+        "Content-Disposition": f"attachment; filename=\"download\"; filename*=UTF-8''{output_name_header}",
+        "X-File-Guard-Action": "sanitized" if processed.sanitized else "accepted",
+        "X-File-Guard-Original-Name": original_name_header,
+        "X-File-Guard-Output-Name": output_name_header,
+        "X-File-Guard-Source-Sha256": processed.source_sha256,
+        "X-File-Guard-Output-Sha256": processed.output_sha256,
+        "X-File-Guard-Source-Mime": processed.source_mime_type,
+        "X-File-Guard-Removed": ",".join(processed.removed_components),
+        "X-File-Guard-Warnings": ",".join(processed.warnings),
+    }
+    return Response(content=processed.content, media_type=processed.output_mime_type, headers=headers)

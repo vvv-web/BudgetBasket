@@ -116,11 +116,14 @@ def validate_office_archive(
         if path_failure is not None:
             return path_failure
 
+        is_excel = extension in {".xlsx", ".xlsm"}
         suffix = Path(info.filename).suffix.lower()
-        if suffix in _OFFICE_FORBIDDEN_EXTENSIONS:
+        if suffix in _OFFICE_FORBIDDEN_EXTENSIONS and not (is_excel and suffix == ".bin"):
             return ("invalid_office_document", "Office document contains forbidden content")
         lowered_name = info.filename.lower()
-        if lowered_name.endswith("vbaproject.bin") or "/embeddings/" in lowered_name and lowered_name.endswith(".bin"):
+        # Spreadsheet active parts are deliberately allowed through this initial
+        # bounded ZIP check.  The sanitizer rebuilds a new workbook without them.
+        if not is_excel and (lowered_name.endswith("vbaproject.bin") or "/embeddings/" in lowered_name and lowered_name.endswith(".bin")):
             return ("invalid_office_document", "Office document contains forbidden content")
 
         if info.file_size > settings.office_max_entry_uncompressed_bytes:
@@ -134,7 +137,7 @@ def validate_office_archive(
             if (info.file_size / info.compress_size) > settings.office_max_compression_ratio:
                 return ("invalid_office_document", "Office document exceeds safety limits")
 
-        if info.filename.endswith(".rels") or info.filename in _OFFICE_XML_SCAN_PATHS:
+        if (not is_excel) and (info.filename.endswith(".rels") or info.filename in _OFFICE_XML_SCAN_PATHS):
             rels_to_scan.append((info.filename, info))
 
     with zipfile.ZipFile(io.BytesIO(content_bytes)) as archive:

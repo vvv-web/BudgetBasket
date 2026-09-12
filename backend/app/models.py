@@ -1,8 +1,9 @@
 from decimal import Decimal
+import re
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class Role(StrEnum):
@@ -23,6 +24,7 @@ class StepStatus(StrEnum):
 
 class UnitType(StrEnum):
     department = "department"
+    cfo = "cfo"
     module = "module"
 
 
@@ -30,8 +32,6 @@ class RequestStatus(StrEnum):
     draft = "draft"
     on_review = "on_review"
     approved = "approved"
-    approved_with_changes = "approved_with_changes"
-    partially_approved = "partially_approved"
     rejected = "rejected"
     cancelled = "cancelled"
 
@@ -44,17 +44,21 @@ class ItemStatus(StrEnum):
     deleted = "deleted"
 
 
+class CfoPositionStatus(StrEnum):
+    waiting = "waiting"
+    on_review = "on_review"
+    on_approval = "on_approval"
+    approved = "approved"
+    on_revision = "on_revision"
+
+
 CLOSED_REQUEST_STATUSES = {
     RequestStatus.approved,
-    RequestStatus.approved_with_changes,
-    RequestStatus.partially_approved,
     RequestStatus.rejected,
     RequestStatus.cancelled,
 }
 EXPORTABLE_REQUEST_STATUSES = {
     RequestStatus.approved,
-    RequestStatus.approved_with_changes,
-    RequestStatus.partially_approved,
 }
 EDITABLE_REQUEST_STATUSES = {RequestStatus.draft}
 APPROVED_ITEM_STATUSES = {ItemStatus.approved, ItemStatus.approved_with_changes}
@@ -69,16 +73,56 @@ class LoginIn(StrictModel):
     password: str
 
 
+PHONE_RE = r"^\+7 \(\d{3}\) \d{3}-\d{2}-\d{2}$"
+EMAIL_RE = r"^[^\s@]+@[^\s@]+\.[^\s@]+$"
+
+
+def validate_required_text(value: str) -> str:
+    value = value.strip()
+    if not value:
+        raise ValueError("Поле обязательно для заполнения")
+    return value
+
+
+def validate_email(value: str) -> str:
+    value = validate_required_text(value)
+    if not re.fullmatch(EMAIL_RE, value):
+        raise ValueError("Укажите email в формате name@example.ru")
+    return value
+
+
+def validate_phone(value: str) -> str:
+    value = validate_required_text(value)
+    if not re.fullmatch(PHONE_RE, value):
+        raise ValueError("Укажите телефон в формате +7 (000) 000-00-00")
+    return value
+
+
 class UserCreate(StrictModel):
     login: str
     password: str
     role: Role
-    name: str | None = None
+    name: str
     second_name: str | None = None
-    last_name: str | None = None
-    phone: str | None = None
-    email: str | None = None
+    last_name: str
+    phone: str
+    email: str
     max_link: str | None = None
+
+    @field_validator("name", "last_name")
+    @classmethod
+    def required_profile_text(cls, value: str) -> str:
+        return validate_required_text(value)
+
+    @field_validator("email")
+    @classmethod
+    def profile_email(cls, value: str) -> str:
+        return validate_email(value)
+
+    @field_validator("phone")
+    @classmethod
+    def profile_phone(cls, value: str) -> str:
+        return validate_phone(value)
 
 
 class UserPatch(StrictModel):
@@ -92,6 +136,21 @@ class UserPatch(StrictModel):
     email: str | None = None
     max_link: str | None = None
 
+    @field_validator("name", "last_name")
+    @classmethod
+    def non_empty_profile_text(cls, value: str | None) -> str | None:
+        return validate_required_text(value) if value is not None else value
+
+    @field_validator("email")
+    @classmethod
+    def valid_profile_email(cls, value: str | None) -> str | None:
+        return validate_email(value) if value is not None else value
+
+    @field_validator("phone")
+    @classmethod
+    def valid_profile_phone(cls, value: str | None) -> str | None:
+        return validate_phone(value) if value is not None else value
+
 
 class ProfilePatch(StrictModel):
     name: str | None = None
@@ -100,6 +159,21 @@ class ProfilePatch(StrictModel):
     phone: str | None = None
     email: str | None = None
     max_link: str | None = None
+
+    @field_validator("name", "last_name")
+    @classmethod
+    def non_empty_profile_text(cls, value: str | None) -> str | None:
+        return validate_required_text(value) if value is not None else value
+
+    @field_validator("email")
+    @classmethod
+    def valid_profile_email(cls, value: str | None) -> str | None:
+        return validate_email(value) if value is not None else value
+
+    @field_validator("phone")
+    @classmethod
+    def valid_profile_phone(cls, value: str | None) -> str | None:
+        return validate_phone(value) if value is not None else value
 
 
 class UnitCreate(StrictModel):
@@ -134,6 +208,8 @@ class CatalogCreate(StrictModel):
     unit_id: str | None = None
     name: str
     is_active: bool = True
+    # Explicit-category flows disable this fallback to avoid A -> A beside A -> B.
+    create_default_category: bool = True
 
 
 class CatalogPatch(StrictModel):
@@ -145,11 +221,10 @@ class CatalogPatch(StrictModel):
 
 class RequestCreate(StrictModel):
     unit_id: str
-    economist_id: str | None = None
 
 
 class RequestPatch(StrictModel):
-    status: RequestStatus | None = None
+    """Requests have no freely patchable workflow fields."""
 
 
 class ItemMonthPlan(StrictModel):
@@ -164,6 +239,11 @@ class ItemCreate(StrictModel):
     sum_plan: Decimal = Field(default=Decimal("0"), ge=0, max_digits=14, decimal_places=2)
     name: str = ""
     justification: str = ""
+    analytics_1: str = ""
+    analytics_2: str = ""
+    analytics_3: str = ""
+    analytics_4: str = ""
+    analytics_5: str = ""
     month_plans: list[ItemMonthPlan] = Field(default_factory=list)
 
 
@@ -177,6 +257,11 @@ class ItemPatch(StrictModel):
     comment: str | None = None
     name: str | None = Field(default=None, min_length=1)
     justification: str | None = None
+    analytics_1: str | None = None
+    analytics_2: str | None = None
+    analytics_3: str | None = None
+    analytics_4: str | None = None
+    analytics_5: str | None = None
     month_plans: list[ItemMonthPlan] | None = None
     clear_month_plans: bool = False
 
@@ -191,7 +276,7 @@ class ChatReadPatch(StrictModel):
 
 
 class StepCreate(StrictModel):
-    user_id: str
+    user_id: str | None = None
     unit_id: str | None = None
     status: StepStatus = StepStatus.waiting
     child_step_id: str | None = None
@@ -221,7 +306,105 @@ class StepReturnIn(StrictModel):
 
 class StepApproveIn(StrictModel):
     """The exact independent package a reviewer is forwarding."""
-    request_ids: list[str] = Field(default_factory=list)
+    position_ids: list[str] = Field(default_factory=list)
+
+
+class PositionLineApprovalIn(StrictModel):
+    step_id: str
+    position_id: str
+    item_ids: list[str] = Field(min_length=1)
+
+
+class BulkPositionLineApprovalIn(StrictModel):
+    positions: list[PositionLineApprovalIn] = Field(min_length=1)
+    comment: str = ""
+    event_id: str | None = None
+
+
+class ItemDecisionIn(StrictModel):
+    # ``on_revision`` is a saved workflow choice.  Unlike an item status it
+    # leaves the budget line in ``on_review`` until the reviewer explicitly
+    # sends the selected position back to the preceding route step.
+    decision: ItemStatus | Literal["on_revision"]
+    comment: str = ""
+    sum_plan: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    sum_fact: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    name: str | None = Field(default=None, min_length=1)
+    justification: str | None = None
+    month_plans: list[ItemMonthPlan] | None = None
+
+
+class BulkItemDecisionIn(StrictModel):
+    item_ids: list[str] = Field(min_length=1)
+    decision: ItemStatus | Literal["on_revision"]
+    comment: str = ""
+
+
+class RegisterGroupDecisionIn(StrictModel):
+    decision: ItemStatus
+    comment: str = ""
+
+
+class RegisterGroupWorkflowActionIn(StrictModel):
+    """Action over all actionable CFO positions in an article or CFO group."""
+
+    action: Literal["submit", "approve", "return_for_revision", "fix", "unfix"]
+    comment: str = ""
+    target_step_id: str | None = None
+    items: list["RevisionItemIn"] | None = None
+
+
+class RegisterGroupCfoRevisionIn(StrictModel):
+    """Partial CFO review return for a register article/CFO group."""
+
+    comment: str = ""
+    items: list["RevisionItemIn"] = Field(min_length=1)
+
+
+class CfoRevisionSelectionIn(StrictModel):
+    """Save a CFO revision choice without handing the package to the module."""
+
+    comment: str = ""
+
+
+class AnalyticsFieldsPatch(StrictModel):
+    analytics_1: str | None = None
+    analytics_2: str | None = None
+    analytics_3: str | None = None
+    analytics_4: str | None = None
+    analytics_5: str | None = None
+
+
+class CfoPositionActionIn(StrictModel):
+    comment: str = ""
+    item_ids: list[str] = Field(default_factory=list)
+    event_id: str | None = None
+
+
+class CfoPositionCommentIn(StrictModel):
+    comment: str = Field(min_length=1, max_length=4000)
+
+
+class CfoPositionReturnIn(StrictModel):
+    target_step_id: str | None = None
+    comment: str = Field(min_length=1)
+    item_ids: list[str] = Field(default_factory=list)
+
+
+class RevisionItemIn(StrictModel):
+    item_id: str
+    comment: str = ""
+    suggested_sum_fact: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+
+
+class CfoPositionRevisionIn(StrictModel):
+    target_step_id: str | None = None
+    comment: str = ""
+    items: list[RevisionItemIn] = Field(min_length=1)
+
+
+class NotificationReadIn(StrictModel):
+    read: bool = True
 
 
 def clean_patch(model: BaseModel) -> dict[str, Any]:

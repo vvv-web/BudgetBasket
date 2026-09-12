@@ -16,7 +16,7 @@ BudgetBasket — система сбора, согласования и утве
 - Frontend: React, TypeScript, Vite, MUI.
 - База данных: PostgreSQL 16.
 - Хранилище вложений: SeaweedFS по S3-совместимому API.
-- Проверка вложений: отдельный сервис `file_guard`, структурные проверки форматов и ClamAV.
+- Проверка вложений: отдельный сервис `file_guard`, структурные проверки форматов и ClamAV; Excel пересобирается в безопасную просмотровую копию.
 - Локальное развёртывание: Docker Compose.
 
 ## Настройка окружения
@@ -110,6 +110,8 @@ npm run dev
 
 Для запуска `file_guard` вне Compose требуются его системные зависимости (`libmagic`, при включённой антивирусной проверке — ClamAV). Для локальной разработки без ClamAV явно задайте `FILE_GUARD_ANTIVIRUS_ENABLED=false` и `FILE_GUARD_REQUIRE_ANTIVIRUS=false`.
 
+Excel `.xlsx` и `.xlsm` после проверки ClamAV пересобираются в `.xlsx`, которую backend и сохраняет. В копию не входят макросы, формулы, изображения, диаграммы, сводные таблицы, внешние подключения и другие активные либо сложные элементы. `.xls` не поддерживается. Лимиты пересборки и список удаляемых компонентов описаны переменными `FILE_GUARD_EXCEL_*` в `.env.example`; при недоступном обязательном ClamAV обработка отклоняется.
+
 ## Запуск тестов
 
 Запуск всех тестов одной командой из корня репозитория:
@@ -142,3 +144,17 @@ docker compose exec backend alembic current
 ```
 
 Подробные команды для диагностики, миграций и ежедневной работы — в [COMMANDS.md](COMMANDS.md).
+
+## Production-сборка frontend
+
+Отдельная Compose-конфигурация собирает Vite-приложение и раздаёт его через nginx на порту `5174`. Обычный frontend для разработки на порту `5173` при этом сохраняется.
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build frontend-production
+```
+
+nginx проксирует `/api/` в backend, использует SPA fallback, gzip, длительный immutable-кеш для хешированных assets и обязательную перепроверку HTML.
+
+## Профилирование производительности
+
+Воспроизводимый аудит создаёт только отдельные базы `budgetbasket_perf_100`, `budgetbasket_perf_1000` и `budgetbasket_perf_20000`; рабочую базу он не изменяет. Команды, методика и результаты находятся в [отчёте](docs/performance/AUDIT.md).
