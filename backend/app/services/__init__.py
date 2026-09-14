@@ -6,6 +6,7 @@ from app.services.chat_connection_manager import ChatConnectionManager
 from app.services.chat_service import ChatService
 from app.services.excel_service import ExcelService
 from app.services.file_service import FileService
+from app.services.notification_service import NotificationService
 from app.services.permission_service import PermissionService
 from app.services.request_service import RequestService
 from app.services.unit_service import UnitService
@@ -20,6 +21,7 @@ __all__ = [
     "ChatService",
     "ExcelService",
     "FileService",
+    "NotificationService",
     "PermissionService",
     "RequestService",
     "UnitService",

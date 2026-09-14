@@ -1,0 +1,13 @@
+services:
+  frontend-production:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.production
+    ports:
+      - "${FRONTEND_PRODUCTION_HOST_PORT:-5174}:80"
+    environment:
+      APP_PORT: ${APP_PORT}
+    depends_on:
+      - backend
+    networks:
+      - app

@@ -1,19 +1,31 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { Navigate, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api } from './api/client';
-import { FilePreviewDialog } from './components/FilePreviewDialog';
 import { Layout } from './components/Layout';
-import CatalogsPage from './pages/CatalogsPage';
-import ApprovalPage from './pages/ApprovalPage';
-import DashboardPage from './pages/DashboardPage';
+import { PageSkeleton } from './components/PageSkeleton';
 import LoginPage from './pages/LoginPage';
-import RequestDetailsPage from './pages/RequestDetailsPage';
-import RequestsPage from './pages/RequestsPage';
-import UnitsPage from './pages/UnitsPage';
-import UsersPage from './pages/UsersPage';
 import type { User } from './types';
 import { canAccessApproval, defaultRouteForRole } from './utils/roles';
 import { AUTH_TOKEN_KEY, AUTH_USER_KEY, clearUserSession } from './utils/session';
+
+const ApprovalPage = lazy(() => import('./pages/ApprovalPage'));
+const CatalogsPage = lazy(() => import('./pages/CatalogsPage'));
+const DashboardPage = lazy(() => import('./pages/DashboardPage'));
+const RequestDetailsPage = lazy(() => import('./pages/RequestDetailsPage'));
+const RequestsPage = lazy(() => import('./pages/RequestsPage'));
+const UnitsPage = lazy(() => import('./pages/UnitsPage'));
+const UsersPage = lazy(() => import('./pages/UsersPage'));
+const FilePreviewDialog = lazy(() => import('./components/FilePreviewDialog').then((module) => ({
+  default: module.FilePreviewDialog,
+})));
+
+function PageLoadBoundary({ children, variant = 'table', label }: {
+  children: ReactNode;
+  variant?: 'table' | 'dashboard' | 'details';
+  label: string;
+}) {
+  return <Suspense fallback={<PageSkeleton variant={variant} label={label} />}>{children}</Suspense>;
+}
 
 function RequestDetailsRoute({ user }: { user: User }) {
   const { id = '' } = useParams();
@@ -86,16 +98,17 @@ export default function App() {
 
   return (
     <Routes>
-      <Route path="/file-preview/:fileId" element={<FilePreviewRoute />} />
+      <Route path="/file-preview/:fileId" element={<PageLoadBoundary variant="details" label="Загрузка файла"><FilePreviewRoute /></PageLoadBoundary>} />
       <Route element={<Layout user={user} onLogout={logout} onUserChange={persistUser} />}>
-        <Route path="/" element={user.role === 'employee' ? <Navigate to="/requests" replace /> : <DashboardPage user={user} />} />
+        <Route path="/" element={user.role === 'employee' || user.role === 'economist' ? <Navigate to="/requests" replace /> : <PageLoadBoundary variant="dashboard" label="Загрузка сводки бюджета"><DashboardPage user={user} /></PageLoadBoundary>} />
         <Route path="/income-dashboard" element={<Navigate to="/" replace />} />
-        <Route path="/requests" element={<RequestsPage user={user} />} />
-        <Route path="/requests/:id" element={<RequestDetailsRoute user={user} />} />
-        <Route path="/users" element={user.role === 'admin' ? <UsersPage /> : <Navigate to="/" replace />} />
-        <Route path="/units" element={user.role === 'admin' ? <UnitsPage /> : <Navigate to="/" replace />} />
-        <Route path="/catalogs" element={user.role === 'admin' ? <CatalogsPage /> : <Navigate to="/" replace />} />
-        <Route path="/approval" element={canAccessApproval(user.role) ? <ApprovalPage key={user.id} user={user} /> : <Navigate to="/" replace />} />
+        <Route path="/requests" element={<PageLoadBoundary label="Загрузка заявок"><RequestsPage user={user} /></PageLoadBoundary>} />
+        <Route path="/register" element={<Navigate to="/requests" replace />} />
+        <Route path="/requests/:id" element={<PageLoadBoundary variant="details" label="Загрузка заявки"><RequestDetailsRoute user={user} /></PageLoadBoundary>} />
+        <Route path="/users" element={user.role === 'admin' ? <PageLoadBoundary label="Загрузка пользователей"><UsersPage /></PageLoadBoundary> : <Navigate to="/" replace />} />
+        <Route path="/units" element={user.role === 'admin' ? <PageLoadBoundary label="Загрузка оргструктуры"><UnitsPage /></PageLoadBoundary> : <Navigate to="/" replace />} />
+        <Route path="/catalogs" element={user.role === 'admin' || user.role === 'economist' ? <PageLoadBoundary label="Загрузка справочников"><CatalogsPage user={user} /></PageLoadBoundary> : <Navigate to="/" replace />} />
+        <Route path="/approval" element={canAccessApproval(user.role) ? <PageLoadBoundary label="Загрузка согласования"><ApprovalPage key={user.id} user={user} /></PageLoadBoundary> : <Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

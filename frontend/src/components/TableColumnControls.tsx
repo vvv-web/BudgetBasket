@@ -16,7 +16,7 @@ import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
-import { useMemo, useState, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { Fragment, useMemo, useState, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import type {
   TableColumnDefinition,
   TableFilterOption,
@@ -53,6 +53,7 @@ export function TableColumnTools<K extends string>({
   onResetFilters,
   onResetWidths,
   hasActiveFilters = false,
+  buttonLabel,
 }: {
   columns: ColumnMeta<K>[];
   visibility: Record<K, boolean>;
@@ -61,6 +62,7 @@ export function TableColumnTools<K extends string>({
   onResetFilters?: () => void;
   onResetWidths?: () => void;
   hasActiveFilters?: boolean;
+  buttonLabel?: string;
 }) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const visibleHideableCount = columns.filter((column) => column.hideable !== false && visibility[column.id]).length;
@@ -68,7 +70,18 @@ export function TableColumnTools<K extends string>({
 
   return (
     <>
-      <Tooltip title="Настройки таблицы">
+      {buttonLabel ? (
+        <Button
+          size="small"
+          variant="outlined"
+          color={hasActiveFilters || hasHiddenColumns ? 'primary' : 'inherit'}
+          startIcon={<ViewColumnOutlinedIcon fontSize="small" />}
+          endIcon={<ArrowDropDownIcon fontSize="small" />}
+          onClick={(event) => setAnchorEl(event.currentTarget)}
+        >
+          {buttonLabel}
+        </Button>
+      ) : <Tooltip title="Настройки таблицы">
         <IconButton
           size="small"
           color={hasActiveFilters || hasHiddenColumns ? 'primary' : 'default'}
@@ -85,7 +98,7 @@ export function TableColumnTools<K extends string>({
         >
           <SettingsOutlinedIcon fontSize="small" />
         </IconButton>
-      </Tooltip>
+      </Tooltip>}
       <Menu anchorEl={anchorEl} open={!!anchorEl} onClose={() => setAnchorEl(null)}>
         <MenuItem disabled>
           <ViewColumnOutlinedIcon fontSize="small" />
@@ -122,7 +135,7 @@ export function TableColumnResizeHandle({
   onDoubleClick?: () => void;
 }) {
   return (
-    <Tooltip title="Перетащите для изменения ширины; дважды нажмите для подбора по содержимому" placement="top">
+    <Tooltip title="Перетащите для изменения ширины; дважды нажмите для подбора по содержимому" placement="top" enterDelay={500}>
       <Box
         component="span"
         role="separator"
@@ -133,20 +146,26 @@ export function TableColumnResizeHandle({
         sx={{
           position: 'absolute',
           top: 0,
-          right: -4,
-          zIndex: 2,
-          width: 8,
-          height: '100%',
+          bottom: 0,
+          right: 0,
+          zIndex: 6,
+          width: 4,
           cursor: 'col-resize',
           touchAction: 'none',
-          '&:hover::after': {
+          transform: 'translateX(50%)',
+          '&::after': {
             content: '""',
             position: 'absolute',
-            top: 8,
-            bottom: 8,
-            left: 3,
+            top: 0,
+            bottom: 0,
+            left: '50%',
+            transform: 'translateX(-50%)',
             width: 2,
-            borderRadius: 1,
+            borderRadius: 0,
+            bgcolor: 'transparent',
+            transition: 'background-color 120ms ease',
+          },
+          '&:hover::after': {
             bgcolor: 'primary.main',
           },
         }}
@@ -171,9 +190,10 @@ export function TableColumnHeader({
   onSelectAllFilterValues,
   onClearColumnFilter,
   onClearVisibleFilterValues,
+  formatFilterOptionLabel,
+  filterOptionSection,
   endAdornment,
-  onResize,
-  onAutoFit,
+  onOpenFilter,
 }: {
   label: ReactNode;
   sortable?: boolean;
@@ -190,9 +210,10 @@ export function TableColumnHeader({
   onSelectAllFilterValues?: () => void;
   onClearColumnFilter?: () => void;
   onClearVisibleFilterValues?: () => void;
+  formatFilterOptionLabel?: (option: TableFilterOption) => string;
+  filterOptionSection?: (option: TableFilterOption) => string | null;
   endAdornment?: ReactNode;
-  onResize?: (event: ReactPointerEvent<HTMLSpanElement>) => void;
-  onAutoFit?: () => void;
+  onOpenFilter?: () => void;
 }) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
 
@@ -202,17 +223,32 @@ export function TableColumnHeader({
   const columnSorted = !!sortDirection;
   const menuActive = columnFiltered;
   const hasColumnControls = sortable || filterable;
+  const optionLabel = (option: TableFilterOption) => formatFilterOptionLabel?.(option) || option.label;
+  const displayedFilterOptions = useMemo(() => {
+    if (!filterOptionSection) return filterOptions;
+    const withSections = filterOptions.map((option, index) => ({
+      option,
+      index,
+      section: filterOptionSection(option) || '',
+    }));
+    if (!withSections.some(({ section }) => section)) return filterOptions;
+    return withSections
+      .sort((left, right) => left.section.localeCompare(right.section, 'ru') || left.index - right.index)
+      .map(({ option }) => option);
+  }, [filterOptionSection, filterOptions]);
 
   const filterSummary = useMemo(() => {
     if (!columnFiltered) return 'Все значения';
     if (selectedValues.length === 0) return 'Нет выбранных значений';
     if (selectedValues.length === 1) {
-      return filterOptions.find((option) => option.value === selectedValues[0])?.label || '1 значение';
+      const option = filterOptions.find((entry) => entry.value === selectedValues[0]);
+      return option ? optionLabel(option) : '1 значение';
     }
     return `Выбрано: ${selectedValues.length}`;
-  }, [columnFiltered, filterOptions, selectedValues]);
+  }, [columnFiltered, filterOptions, formatFilterOptionLabel, selectedValues]);
 
   const openFilterMenu = (event: MouseEvent<HTMLElement>) => {
+    onOpenFilter?.();
     event.stopPropagation();
     setAnchorEl(event.currentTarget);
   };
@@ -231,51 +267,63 @@ export function TableColumnHeader({
 
   return (
     <>
-      <Box sx={{ position: 'relative', width: '100%', minWidth: 0, pr: endAdornment || onResize ? 1.5 : 0, '&:hover .column-sort-button': { opacity: 1 } }}>
-        <Typography component="span" variant="body2" fontWeight={600} sx={{ display: 'block', minWidth: 0, overflow: 'hidden', pr: hasColumnControls ? 6 : 0, textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {label}
-        </Typography>
-        <Stack
-          direction="row"
-          spacing={0.25}
-          alignItems="center"
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          width: '100%',
+          minWidth: 0,
+          gap: 0.25,
+          pr: endAdornment ? 1.5 : 0,
+        }}
+      >
+        <Typography
+          component="span"
+          variant="body2"
+          fontWeight={600}
           sx={{
-            position: 'absolute',
-            top: '50%',
-            right: onResize ? 4 : 0,
-            transform: 'translateY(-50%)',
-            zIndex: 1,
+            flex: 1,
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            lineHeight: 1.25,
           }}
         >
-          {sortable && (
-            <Tooltip title={columnSorted ? 'Изменить направление сортировки' : 'Сортировать'}>
-              <IconButton
-                className="column-sort-button"
-                size="small"
-                color={columnSorted ? 'primary' : 'default'}
-                onClick={toggleSort}
-                sx={{ opacity: columnSorted ? 1 : 0, transition: 'opacity 120ms ease' }}
-              >
-                <ArrowDownwardIcon
-                  fontSize="inherit"
-                  sx={{
-                    opacity: columnSorted ? 1 : 0.6,
-                    transform: sortDirection === 'asc' ? 'rotate(180deg)' : 'none',
-                  }}
-                />
-              </IconButton>
-            </Tooltip>
-          )}
-          {filterable && (
-            <Tooltip title={menuActive ? filterSummary : 'Фильтр'}>
-              <IconButton size="small" color={menuActive ? 'primary' : 'default'} onClick={openFilterMenu}>
-                {columnFiltered ? <FilterAltOutlinedIcon fontSize="inherit" /> : <ArrowDropDownIcon fontSize="inherit" />}
-              </IconButton>
-            </Tooltip>
-          )}
-        </Stack>
+          {label}
+        </Typography>
+        {hasColumnControls ? (
+          <Stack direction="row" spacing={0.25} alignItems="center" sx={{ flexShrink: 0 }}>
+            {sortable && (
+              <Tooltip title={columnSorted ? 'Изменить направление сортировки' : 'Сортировать'}>
+                <IconButton
+                  className="column-sort-button"
+                  size="small"
+                  color={columnSorted ? 'primary' : 'default'}
+                  onClick={toggleSort}
+                  aria-label={columnSorted ? 'Изменить направление сортировки' : 'Сортировать'}
+                  sx={{ opacity: columnSorted ? 1 : 0.72, p: 0.35 }}
+                >
+                  <ArrowDownwardIcon
+                    fontSize="inherit"
+                    sx={{
+                      opacity: columnSorted ? 1 : 0.6,
+                      transform: sortDirection === 'asc' ? 'rotate(180deg)' : 'none',
+                    }}
+                  />
+                </IconButton>
+              </Tooltip>
+            )}
+            {filterable && (
+              <Tooltip title={menuActive ? filterSummary : 'Фильтр'}>
+                <IconButton size="small" color={menuActive ? 'primary' : 'default'} onClick={openFilterMenu} aria-label={menuActive ? filterSummary : 'Фильтр'} sx={{ p: 0.35 }}>
+                  {columnFiltered ? <FilterAltOutlinedIcon fontSize="inherit" /> : <ArrowDropDownIcon fontSize="inherit" />}
+                </IconButton>
+              </Tooltip>
+            )}
+          </Stack>
+        ) : null}
         {endAdornment}
-        {onResize && <TableColumnResizeHandle onPointerDown={onResize} onDoubleClick={onAutoFit} />}
       </Box>
       <Popover
         open={!!anchorEl}
@@ -308,52 +356,75 @@ export function TableColumnHeader({
                 </Button>
               </Stack>
               <Stack spacing={0} sx={{ maxHeight: 280, overflowY: 'auto', border: '1px solid rgba(15, 23, 42, 0.08)', borderRadius: 1 }}>
-                {filterOptions.length > 0 ? (
-                  filterOptions.map((option) => {
+                {displayedFilterOptions.length > 0 ? (
+                  displayedFilterOptions.map((option, index) => {
                     const checked = selectedValues.includes(option.value);
-                    const lineCount = filterOptionLineCount(option.label);
+                    const labelText = optionLabel(option);
+                    const lineCount = filterOptionLineCount(labelText);
+                    const section = filterOptionSection?.(option);
+                    const previousSection = index > 0 ? filterOptionSection?.(displayedFilterOptions[index - 1]) : null;
                     return (
-                      <Box
-                        key={option.value}
-                        role="menuitemcheckbox"
-                        aria-checked={checked}
-                        tabIndex={0}
-                        onClick={() => onToggleFilterValue?.(option.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault();
-                            onToggleFilterValue?.(option.value);
-                          }
-                        }}
-                        sx={{
-                          display: 'grid',
-                          gridTemplateColumns: '40px 64px minmax(0, 1fr)',
-                          alignItems: 'center',
-                          width: '100%',
-                          minHeight: Math.max(44, lineCount * 22 + 16),
-                          boxSizing: 'border-box',
-                          cursor: 'pointer',
-                          textAlign: 'left',
-                          py: 0.75,
-                          px: 1.5,
-                          '&:hover': { bgcolor: 'action.hover' },
-                          '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 },
-                        }}
-                      >
-                        <Checkbox edge="start" checked={checked} disableRipple sx={{ ml: -0.5 }} />
-                        <Typography
-                          variant="body2"
-                          color="text.secondary"
-                          sx={{ pr: 1, lineHeight: 1.25 }}
-                        >
-                          {option.count > 1 ? `${option.count} строк` : '1 строка'}
-                        </Typography>
-                        <Box sx={{ minWidth: 0 }}>
-                          <Typography variant="body2" sx={{ whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.25 }}>
-                            {option.label}
+                      <Fragment key={option.value}>
+                        {section && section !== previousSection && (
+                          <Typography variant="overline" sx={{
+                            display: 'block',
+                            px: 1.5,
+                            pt: index ? 1.5 : 0.9,
+                            pb: 0.7,
+                            mt: index ? 0.5 : 0,
+                            color: 'primary.dark',
+                            bgcolor: 'rgba(47, 105, 230, 0.07)',
+                            borderTop: index ? '1px solid rgba(47, 105, 230, 0.18)' : undefined,
+                            borderBottom: '1px solid rgba(15, 23, 42, 0.06)',
+                            fontSize: 10,
+                            fontWeight: 800,
+                            letterSpacing: 0.45,
+                            lineHeight: 1.2,
+                          }}>
+                            {section}
                           </Typography>
+                        )}
+                        <Box
+                          role="menuitemcheckbox"
+                          aria-checked={checked}
+                          tabIndex={0}
+                          onClick={() => onToggleFilterValue?.(option.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              onToggleFilterValue?.(option.value);
+                            }
+                          }}
+                          sx={{
+                            display: 'grid',
+                            gridTemplateColumns: '40px 64px minmax(0, 1fr)',
+                            alignItems: 'center',
+                            width: '100%',
+                            minHeight: Math.max(44, lineCount * 22 + 16),
+                            boxSizing: 'border-box',
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            py: 0.75,
+                            px: 1.5,
+                            '&:hover': { bgcolor: 'action.hover' },
+                            '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 },
+                          }}
+                        >
+                          <Checkbox edge="start" checked={checked} disableRipple sx={{ ml: -0.5 }} />
+                          <Typography
+                            variant="body2"
+                            color="text.secondary"
+                            sx={{ pr: 1, lineHeight: 1.25 }}
+                          >
+                            {option.count > 1 ? `${option.count} строк` : '1 строка'}
+                          </Typography>
+                          <Box sx={{ minWidth: 0 }}>
+                            <Typography variant="body2" sx={{ whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.25 }}>
+                              {labelText}
+                            </Typography>
+                          </Box>
                         </Box>
-                      </Box>
+                      </Fragment>
                     );
                   })
                 ) : (

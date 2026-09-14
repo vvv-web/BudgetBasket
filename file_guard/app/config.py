@@ -41,12 +41,13 @@ def _env_csv(name: str, default: str) -> tuple[str, ...]:
 class Settings:
     max_file_size_bytes: int = _env_int("FILE_GUARD_MAX_FILE_SIZE_BYTES", 25 * 1024 * 1024)
     allowed_extensions: tuple[str, ...] = _env_csv(
-        "FILE_GUARD_ALLOWED_EXTENSIONS", ".pdf,.png,.jpg,.jpeg,.xlsx,.docx,.zip"
+        "FILE_GUARD_ALLOWED_EXTENSIONS", ".pdf,.png,.jpg,.jpeg,.xlsx,.xlsm,.docx,.zip"
     )
     allowed_mime_types: tuple[str, ...] = _env_csv(
         "FILE_GUARD_ALLOWED_MIME_TYPES",
         "application/pdf,image/png,image/jpeg,"
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,"
+        "application/vnd.ms-excel.sheet.macroenabled.12,"
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/zip",
     )
     allow_libmagic_fallback: bool = _env_bool("FILE_GUARD_ALLOW_LIBMAGIC_FALLBACK", True)
@@ -71,6 +72,18 @@ class Settings:
     image_max_width: int = _env_int("FILE_GUARD_IMAGE_MAX_WIDTH", 12000)
     image_max_height: int = _env_int("FILE_GUARD_IMAGE_MAX_HEIGHT", 12000)
     image_max_pixels: int = _env_int("FILE_GUARD_IMAGE_MAX_PIXELS", 40_000_000)
+    excel_sanitization_enabled: bool = _env_bool("FILE_GUARD_EXCEL_SANITIZATION_ENABLED", True)
+    excel_max_sheets: int = _env_int("FILE_GUARD_EXCEL_MAX_SHEETS", 100)
+    excel_max_rows_per_sheet: int = _env_int("FILE_GUARD_EXCEL_MAX_ROWS_PER_SHEET", 200_000)
+    excel_max_columns_per_sheet: int = _env_int("FILE_GUARD_EXCEL_MAX_COLUMNS_PER_SHEET", 500)
+    excel_max_non_empty_cells: int = _env_int("FILE_GUARD_EXCEL_MAX_NON_EMPTY_CELLS", 1_000_000)
+    excel_max_merged_ranges: int = _env_int("FILE_GUARD_EXCEL_MAX_MERGED_RANGES", 10_000)
+    excel_max_cell_string_length: int = _env_int("FILE_GUARD_EXCEL_MAX_CELL_STRING_LENGTH", 32_767)
+    excel_max_output_size_bytes: int = _env_int("FILE_GUARD_EXCEL_MAX_OUTPUT_SIZE_BYTES", 25 * 1024 * 1024)
+    excel_remove_formulas: bool = _env_bool("FILE_GUARD_EXCEL_REMOVE_FORMULAS", True)
+    excel_remove_external_links: bool = _env_bool("FILE_GUARD_EXCEL_REMOVE_EXTERNAL_LINKS", True)
+    excel_remove_images: bool = _env_bool("FILE_GUARD_EXCEL_REMOVE_IMAGES", True)
+    excel_remove_charts: bool = _env_bool("FILE_GUARD_EXCEL_REMOVE_CHARTS", True)
 
 
 settings = Settings()

@@ -19,19 +19,25 @@ import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import Divider from '@mui/material/Divider';
+import FormControl from '@mui/material/FormControl';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import FormHelperText from '@mui/material/FormHelperText';
 import IconButton from '@mui/material/IconButton';
 import MenuItem from '@mui/material/MenuItem';
 import Paper from '@mui/material/Paper';
+import Radio from '@mui/material/Radio';
+import RadioGroup from '@mui/material/RadioGroup';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react';
 import { api } from '../api/client';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { PageSkeleton } from '../components/PageSkeleton';
 import { usePageChromeActions, usePageChromeLeading } from '../components/Layout';
 import { useAppToast } from '../components/Layout';
 import type { Unit, User } from '../types';
@@ -47,7 +53,7 @@ interface Assignment {
   id: string;
   economist_id: string;
   unit_id: string;
-  assignment_type: 'department' | 'module';
+  assignment_type: 'cfo';
   is_active: boolean;
 }
 
@@ -67,6 +73,18 @@ function unitLevel(unitId: string, units: Unit[]): number {
     current = byId.get(current.parent_id);
   }
   return level;
+}
+
+function buildUnitTree(units: Unit[]): Unit[] {
+  const nodes = units.map((unit) => ({ ...unit, children: [] as Unit[] }));
+  const byId = new Map(nodes.map((unit) => [unit.id, unit]));
+  const roots: Unit[] = [];
+  nodes.forEach((unit) => {
+    const parent = unit.parent_id ? byId.get(unit.parent_id) : null;
+    if (parent) parent.children?.push(unit);
+    else roots.push(unit);
+  });
+  return roots;
 }
 
 function fullName(user?: User): string {
@@ -199,7 +217,9 @@ function UnitFormDialog({
 
   const isEdit = mode.kind === 'edit';
   const level = mode.kind === 'create-root' ? 1 : mode.level;
-  const canAssign = level === 3;
+  const canAssignResponsible = level === 2 || level === 3;
+  const canAssignEconomist = level === 2;
+  const modeChangeBlocked = Boolean(isEdit && mode.unit.has_requests);
 
   const title = isEdit
     ? `Редактировать: ${mode.unit.name}`
@@ -216,15 +236,17 @@ function UnitFormDialog({
         {title}
         {isEdit && onDelete && (
           <Tooltip title="Удалить объединение">
-            <IconButton
-              color="error"
-              onClick={onDelete}
-              disabled={pending || deletePending}
-              sx={{ position: 'absolute', top: 18, right: 18 }}
-              aria-label="Удалить объединение"
-            >
-              <DeleteOutlineIcon />
-            </IconButton>
+            <span>
+              <IconButton
+                color="error"
+                onClick={onDelete}
+                disabled={pending || deletePending}
+                sx={{ position: 'absolute', top: 18, right: 18 }}
+                aria-label="Удалить объединение"
+              >
+                <DeleteOutlineIcon />
+              </IconButton>
+            </span>
           </Tooltip>
         )}
       </DialogTitle>
@@ -235,11 +257,23 @@ function UnitFormDialog({
 
           <TextField label="Название" value={name} onChange={(event) => setName(event.target.value)} fullWidth autoFocus />
           <Alert severity="info">Годовой бюджет рассчитывается автоматически из одобренных строк закрытых заявок.</Alert>
-          <TextField select label="Тип строк заявки" value={usesInvestProjects ? 'invest' : 'dds'} onChange={(event) => setUsesInvestProjects(event.target.value === 'invest')} fullWidth>
-            <MenuItem value="dds">Статьи ДДС</MenuItem>
-            <MenuItem value="invest">Инвестиционные проекты</MenuItem>
-          </TextField>
-          {mode.kind === 'create-child' && canAssign && (
+          <FormControl component="fieldset" fullWidth>
+            <Typography variant="subtitle2" component="legend">Тип строк заявки</Typography>
+            <RadioGroup
+              row
+              value={usesInvestProjects ? 'invest' : 'dds'}
+              onChange={(event) => setUsesInvestProjects(event.target.value === 'invest')}
+            >
+              <FormControlLabel value="dds" control={<Radio />} label="Статьи ДДС" disabled={modeChangeBlocked} />
+              <FormControlLabel value="invest" control={<Radio />} label="Инвест-проекты" disabled={modeChangeBlocked} />
+            </RadioGroup>
+            <FormHelperText>
+              {modeChangeBlocked
+                ? 'Нельзя сменить режим: для модуля уже создана заявка, в том числе на согласовании.'
+                : 'Режим взаимоисключающий: для строк заявок доступен только один тип.'}
+            </FormHelperText>
+          </FormControl>
+          {mode.kind === 'create-child' && canAssignResponsible && (
             <>
               <Divider />
               <Typography variant="subtitle2" fontWeight={700}>Ответственные объединения</Typography>
@@ -247,7 +281,7 @@ function UnitFormDialog({
             </>
           )}
 
-          {mode.kind !== 'edit' && canAssign && (
+          {mode.kind !== 'edit' && canAssignEconomist && (
             <>
               <Divider />
               <Typography variant="subtitle2" fontWeight={700}>Назначение экономиста</Typography>
@@ -273,7 +307,7 @@ function UnitFormDialog({
             </TextField>
           )}
 
-          {isEdit && canAssign && (
+          {isEdit && canAssignResponsible && (
             <>
               <Divider />
               <Typography variant="subtitle2" fontWeight={700}>Назначение ответственных</Typography>
@@ -281,34 +315,38 @@ function UnitFormDialog({
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25} alignItems={{ sm: 'center' }}>
                   <UserAutocomplete users={employees} value={employeeId} label="Ответственный сотрудник" size="small" onChange={setEmployeeId} />
                   <Tooltip title={employeeId ? 'Сохранить назначение' : 'Снять ответственного'}>
-                    <Button
-                      variant="outlined"
-                      disabled={assignPending || (!employeeId && !responsibleUserId)}
-                      onClick={() => employeeId ? onAssignResponsible(employeeId) : onUnassignResponsible()}
-                      aria-label={employeeId ? 'Сохранить назначение' : 'Снять ответственного'}
-                      sx={{ minWidth: 44, width: 44, px: 0 }}
-                    >
-                      {employeeId ? <SaveOutlinedIcon fontSize="small" /> : <PersonRemoveOutlinedIcon fontSize="small" />}
-                    </Button>
+                    <span>
+                      <Button
+                        variant="outlined"
+                        disabled={assignPending || (!employeeId && !responsibleUserId)}
+                        onClick={() => employeeId ? onAssignResponsible(employeeId) : onUnassignResponsible()}
+                        aria-label={employeeId ? 'Сохранить назначение' : 'Снять ответственного'}
+                        sx={{ minWidth: 44, width: 44, px: 0 }}
+                      >
+                        {employeeId ? <SaveOutlinedIcon fontSize="small" /> : <PersonRemoveOutlinedIcon fontSize="small" />}
+                      </Button>
+                    </span>
                   </Tooltip>
                 </Stack>
 
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25} alignItems={{ sm: 'center' }}>
+              {canAssignEconomist && <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25} alignItems={{ sm: 'center' }}>
                 <UserAutocomplete users={economists} value={economistId} label="Экономист" size="small" onChange={setEconomistId} />
                 <Tooltip title={economistId ? 'Сохранить назначение' : 'Снять экономиста'}>
-                  <Button
-                    variant="outlined"
-                    disabled={assignPending || (!economistId && linkedEconomists.length === 0)}
-                    onClick={() => economistId
-                      ? onAssignEconomist(economistId, mode.kind === 'edit' ? mode.unit.id : '')
-                      : onUnassignEconomist(linkedEconomists[0].id)}
-                    aria-label={economistId ? 'Сохранить назначение' : 'Снять экономиста'}
-                    sx={{ minWidth: 44, width: 44, px: 0 }}
-                  >
-                    {economistId ? <SaveOutlinedIcon fontSize="small" /> : <PersonRemoveOutlinedIcon fontSize="small" />}
-                  </Button>
+                  <span>
+                    <Button
+                      variant="outlined"
+                      disabled={assignPending || (!economistId && linkedEconomists.length === 0)}
+                      onClick={() => economistId
+                        ? onAssignEconomist(economistId, mode.kind === 'edit' ? mode.unit.id : '')
+                        : onUnassignEconomist(linkedEconomists[0].id)}
+                      aria-label={economistId ? 'Сохранить назначение' : 'Снять экономиста'}
+                      sx={{ minWidth: 44, width: 44, px: 0 }}
+                    >
+                      {economistId ? <SaveOutlinedIcon fontSize="small" /> : <PersonRemoveOutlinedIcon fontSize="small" />}
+                    </Button>
+                  </span>
                 </Tooltip>
-              </Stack>
+              </Stack>}
 
             </>
           )}
@@ -324,8 +362,8 @@ function UnitFormDialog({
             is_active: isActive,
             parent_id: parentId,
             uses_invest_projects: usesInvestProjects,
-            responsible_user_id: mode.kind === 'create-child' && canAssign ? employeeId || undefined : undefined,
-            economist_id: mode.kind !== 'edit' && canAssign ? economistId || undefined : undefined,
+            responsible_user_id: mode.kind === 'create-child' && canAssignResponsible ? employeeId || undefined : undefined,
+            economist_id: mode.kind !== 'edit' && canAssignEconomist ? economistId || undefined : undefined,
           })}
         >
           {isEdit ? 'Сохранить' : 'Создать'}
@@ -356,13 +394,13 @@ function OrgUnitCard({
 }) {
   const childCount = unit.children?.length || 0;
   const isRoot = !unit.parent_id;
-  const isAssignmentLevel = depth === 2;
+  const isAssignmentLevel = depth === 1 || depth === 2;
   const canCreateChild = depth < 2;
   const hasChildren = childCount > 0;
   const responsibleUser = users.find((user) => user.id === responsible?.user_id);
   const uniqueEconomists = dedupeUsers(linkedEconomists);
   const missingResponsible = isAssignmentLevel && !responsibleUser;
-  const missingEconomists = isAssignmentLevel && uniqueEconomists.length === 0;
+  const missingEconomists = depth === 1 && uniqueEconomists.length === 0;
   const hasMissingAssignments = missingResponsible || missingEconomists;
   const [peopleExpanded, setPeopleExpanded] = useState(false);
   const peopleCount = (responsibleUser ? 1 : 0) + uniqueEconomists.length;
@@ -402,10 +440,10 @@ function OrgUnitCard({
           <Collapse in={peopleExpanded} timeout="auto">
             <Box className="org-people-grid in-card">
               {responsibleUser ? <PersonCard user={responsibleUser} role="Ответственный сотрудник" /> : <PersonCard role="Ответственный сотрудник" vacancy />}
-              {uniqueEconomists.map((user) => (
+              {depth === 1 && uniqueEconomists.map((user) => (
                 <PersonCard key={user.id} user={user} role="Экономист" />
               ))}
-              {uniqueEconomists.length === 0 && <PersonCard role="Экономист" vacancy />}
+              {depth === 1 && uniqueEconomists.length === 0 && <PersonCard role="Экономист" vacancy />}
             </Box>
           </Collapse>
         </Box>}
@@ -433,15 +471,16 @@ function OrgUnitCard({
 export default function UnitsPage() {
   const queryClient = useQueryClient();
   const toast = useAppToast();
-  const { data: tree = [] } = useQuery({
-    queryKey: ['units-tree'],
-    queryFn: async () => (await api.get<Unit[]>('/units/tree')).data,
-  });
-  const { data: units = [] } = useQuery({ queryKey: ['units'], queryFn: async () => (await api.get<Unit[]>('/units')).data });
-  const { data: users = [] } = useQuery({ queryKey: ['users'], queryFn: async () => (await api.get<User[]>('/users')).data });
-  const { data: assignments = [] } = useQuery({
+  const { data: units = [], isLoading: unitsLoading } = useQuery({ queryKey: ['units'], queryFn: async () => (await api.get<Unit[]>('/units')).data });
+  const tree = useMemo(() => buildUnitTree(units), [units]);
+  const { data: users = [], isLoading: usersLoading } = useQuery({ queryKey: ['users'], queryFn: async () => (await api.get<User[]>('/users')).data });
+  const { data: assignments = [], isLoading: assignmentsLoading } = useQuery({
     queryKey: ['assignments'],
     queryFn: async () => (await api.get<Assignment[]>('/economist-assignments')).data,
+  });
+  const { data: responsibles = [], isLoading: responsiblesLoading } = useQuery({
+    queryKey: ['responsible'],
+    queryFn: async () => (await api.get<Responsible[]>('/unit-responsibles')).data,
   });
 
   const [dialog, setDialog] = useState<UnitDialogMode | null>(null);
@@ -452,30 +491,27 @@ export default function UnitsPage() {
   const [orgPan, setOrgPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const panStart = useRef({ pointerX: 0, pointerY: 0, x: 0, y: 0 });
+  const orgViewportRef = useRef<HTMLDivElement>(null);
+  const orgForestRef = useRef<HTMLDivElement>(null);
 
   const unitLevels = useMemo(() => new Map(units.map((unit) => [unit.id, unitLevel(unit.id, units)])), [units]);
-  const assignableUnits = units.filter((unit) => unitLevels.get(unit.id) === 3);
+  const assignableUnits = units.filter((unit) => [2, 3].includes(unitLevels.get(unit.id) || 0));
   const employees = users.filter((user) => user.role === 'employee');
   const economists = users.filter((user) => user.role === 'economist');
 
-  const responsibleQueries = useQueries({
-    queries: assignableUnits.map((unit) => ({
-      queryKey: ['responsible', unit.id],
-      queryFn: async () => (await api.get<Responsible | null>(`/units/${unit.id}/responsible`)).data,
-    })),
-  });
-
   const responsiblesByUnit = useMemo(() => {
     const result = new Map<string, Responsible | null>();
-    assignableUnits.forEach((unit, index) => result.set(unit.id, responsibleQueries[index]?.data ?? null));
+    assignableUnits.forEach((unit) => {
+      result.set(unit.id, responsibles.find((item) => item.unit_id === unit.id) || null);
+    });
     return result;
-  }, [assignableUnits, responsibleQueries]);
+  }, [assignableUnits, responsibles]);
 
   const economistsByUnit = useMemo(() => {
     const result = new Map<string, User[]>();
     for (const unit of assignableUnits) {
       const matched = assignments
-        .filter((item) => item.is_active && item.unit_id === unit.id && item.assignment_type === 'module')
+        .filter((item) => item.is_active && item.unit_id === unit.id && item.assignment_type === 'cfo')
         .map((item) => users.find((user) => user.id === item.economist_id))
         .filter(Boolean) as User[];
       result.set(unit.id, dedupeUsers(matched));
@@ -499,9 +535,40 @@ export default function UnitsPage() {
     return filterNodes(scopedTree);
   }, [tree, orgSearch, rootUnitId]);
 
+  const clampOrgPan = (nextPan: { x: number; y: number }, nextZoom = orgZoom) => {
+    const viewport = orgViewportRef.current;
+    const forest = orgForestRef.current;
+    if (!viewport || !forest) return nextPan;
+    const padding = 28;
+    const clampAxis = (translation: number, start: number, length: number, viewportLength: number) => {
+      const scaledLength = length * nextZoom;
+      if (scaledLength <= viewportLength - padding * 2) {
+        return (viewportLength - scaledLength) / 2 - start * nextZoom;
+      }
+      const minimum = viewportLength - padding - (start + length) * nextZoom;
+      const maximum = padding - start * nextZoom;
+      return Math.min(maximum, Math.max(minimum, translation));
+    };
+    return {
+      x: clampAxis(nextPan.x, forest.offsetLeft, forest.offsetWidth, viewport.clientWidth),
+      y: clampAxis(nextPan.y, forest.offsetTop, forest.offsetHeight, viewport.clientHeight),
+    };
+  };
+
+  useEffect(() => {
+    const viewport = orgViewportRef.current;
+    if (!viewport || !visibleTree.length) return;
+    const frame = requestAnimationFrame(() => setOrgPan((current) => clampOrgPan(current)));
+    const observer = new ResizeObserver(() => setOrgPan((current) => clampOrgPan(current)));
+    observer.observe(viewport);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [visibleTree, orgZoom]);
+
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ['units'] });
-    queryClient.invalidateQueries({ queryKey: ['units-tree'] });
     queryClient.invalidateQueries({ queryKey: ['assignments'] });
     queryClient.invalidateQueries({ queryKey: ['responsible'] });
   };
@@ -518,7 +585,9 @@ export default function UnitsPage() {
       const unit = (await api.post<Unit>('/units', {
         name: payload.name,
         parent_id: payload.parent_id,
-        type: payload.parent_id ? 'module' : 'department',
+        type: payload.parent_id
+          ? (unitLevels.get(payload.parent_id) === 1 ? 'cfo' : 'module')
+          : 'department',
         is_active: payload.is_active,
         uses_invest_projects: payload.uses_invest_projects,
       })).data;
@@ -529,7 +598,7 @@ export default function UnitsPage() {
         await api.post('/economist-assignments', {
           economist_id: payload.economist_id,
           unit_id: unit.id,
-          assignment_type: 'module',
+          assignment_type: 'cfo',
           is_active: true,
         });
       }
@@ -593,7 +662,7 @@ export default function UnitsPage() {
     }: {
       unitId: string;
       economistId: string;
-      assignmentType: 'department' | 'module';
+      assignmentType: 'cfo';
     }) =>
       api.post('/economist-assignments', {
         economist_id: economistId,
@@ -691,12 +760,15 @@ export default function UnitsPage() {
   };
 
   const changeOrgZoom = (delta: number) => {
-    setOrgZoom((current) => Math.min(1.8, Math.max(0.6, Number((current + delta).toFixed(2)))));
+    const nextZoom = Math.min(1.8, Math.max(0.6, Number((orgZoom + delta).toFixed(2))));
+    setOrgZoom(nextZoom);
+    setOrgPan((current) => clampOrgPan(current, nextZoom));
   };
 
   const resetOrgViewport = () => {
-    setOrgZoom(0.6);
-    setOrgPan({ x: 0, y: 0 });
+    const nextZoom = 0.6;
+    setOrgZoom(nextZoom);
+    setOrgPan(clampOrgPan({ x: 0, y: 0 }, nextZoom));
   };
 
   const handleOrgPointerDown = (event: PointerEvent<HTMLDivElement>) => {
@@ -708,16 +780,20 @@ export default function UnitsPage() {
 
   const handleOrgPointerMove = (event: PointerEvent<HTMLDivElement>) => {
     if (!isPanning) return;
-    setOrgPan({
+    setOrgPan(clampOrgPan({
       x: panStart.current.x + event.clientX - panStart.current.pointerX,
       y: panStart.current.y + event.clientY - panStart.current.pointerY,
-    });
+    }));
   };
 
   const stopOrgPanning = (event: PointerEvent<HTMLDivElement>) => {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     setIsPanning(false);
   };
+
+  if (unitsLoading || usersLoading || assignmentsLoading || responsiblesLoading) {
+    return <PageSkeleton variant="table" label="Загрузка оргструктуры" />;
+  }
 
   return (
     <Stack spacing={3}>
@@ -737,6 +813,7 @@ export default function UnitsPage() {
               </Tooltip>
             </Stack>
             <Box
+              ref={orgViewportRef}
               className={`org-chart-viewport ${isPanning ? 'is-panning' : ''}`}
               onPointerDown={handleOrgPointerDown}
               onPointerMove={handleOrgPointerMove}
@@ -744,7 +821,7 @@ export default function UnitsPage() {
               onPointerCancel={stopOrgPanning}
             >
               <Box className="org-chart-stage" style={{ transform: `translate3d(${orgPan.x}px, ${orgPan.y}px, 0) scale(${orgZoom})` }}>
-                <Box className="org-forest">
+                <Box ref={orgForestRef} className="org-forest">
                   {visibleTree.map((root) => (
                     <Box key={root.id} className="org-chart">
                       {renderNode(root, 0)}
@@ -792,7 +869,7 @@ export default function UnitsPage() {
           assign.mutate({
             unitId,
             economistId,
-            assignmentType: 'module',
+            assignmentType: 'cfo',
           });
         }}
         onUnassignEconomist={(economistId) => {

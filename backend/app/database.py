@@ -14,6 +14,7 @@ from sqlalchemy import (
     MetaData,
     Numeric,
     PrimaryKeyConstraint,
+    SmallInteger,
     Table,
     Text,
     create_engine,
@@ -50,7 +51,7 @@ profiles = Table(
     "profiles", metadata,
     Column("user_id", PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
     Column("name", Text, nullable=False), Column("second_name", Text), Column("last_name", Text, nullable=False),
-    Column("phone", Text), Column("email", Text), Column("max_link", Text),
+    Column("phone", Text, nullable=False), Column("email", Text, nullable=False), Column("max_link", Text),
 )
 
 units = Table(
@@ -75,19 +76,22 @@ units_responsibles = Table(
 
 requests = Table(
     "requests", metadata, uuid_pk(),
-    Column("economist_id", PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")),
     Column("unit_id", PgUUID(as_uuid=True), ForeignKey("units.id", ondelete="RESTRICT"), nullable=False),
+    Column("budget_year", BigInteger, nullable=False),
     Column("status", Text, nullable=False, server_default=text("'draft'")),
-    Column("sum_plan", Numeric(14, 2), nullable=False, server_default=text("0")),
-    Column("sum_fact", Numeric(14, 2), nullable=False, server_default=text("0")),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()),
-    Column("frozen", Boolean, nullable=False, server_default=text("false")),
-    Column("fixed", Boolean, nullable=False, server_default=text("false")),
-    CheckConstraint("sum_plan >= 0", name="requests_sum_plan_chk"),
-    CheckConstraint("sum_fact >= 0", name="requests_sum_fact_chk"),
-    CheckConstraint("status IN ('draft', 'on_review', 'approved', 'approved_with_changes', 'partially_approved', 'rejected', 'cancelled')", name="requests_status_chk"),
-    Index("idx_requests_unit_id", "unit_id"), Index("idx_requests_economist_id", "economist_id"), Index("idx_requests_status", "status"),
+    CheckConstraint("budget_year BETWEEN 2000 AND 2200", name="requests_budget_year_chk"),
+    CheckConstraint("status IN ('draft', 'on_review', 'approved', 'rejected', 'cancelled')", name="requests_status_chk"),
+    Index("idx_requests_unit_id", "unit_id"),
+    Index("idx_requests_status", "status"),
+    Index(
+        "ux_requests_active_unit_budget_year",
+        "unit_id",
+        "budget_year",
+        unique=True,
+        postgresql_where=text("status <> 'cancelled'"),
+    ),
 )
 
 dds_catalog = Table(
@@ -106,9 +110,43 @@ invests_catalog = Table(
     Index("idx_invests_catalog_unit_id", "unit_id"), Index("idx_invests_catalog_parent_id", "parent_id"), Index("idx_invests_catalog_active", "is_active"),
 )
 
+cfo_positions = Table(
+    "cfo_positions", metadata, uuid_pk(),
+    Column("budget_year", BigInteger, nullable=False),
+    Column("cfo_unit_id", PgUUID(as_uuid=True), ForeignKey("units.id", ondelete="RESTRICT"), nullable=False),
+    Column("dds_id", PgUUID(as_uuid=True), ForeignKey("dds_catalog.id", ondelete="RESTRICT")),
+    Column("invest_id", PgUUID(as_uuid=True), ForeignKey("invests_catalog.id", ondelete="RESTRICT")),
+    Column("status", Text, nullable=False, server_default=text("'waiting'")),
+    Column("current_step_id", PgUUID(as_uuid=True), ForeignKey("steps.id", ondelete="SET NULL")),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()),
+    CheckConstraint("budget_year BETWEEN 2000 AND 2200", name="cfo_positions_budget_year_chk"),
+    CheckConstraint("(dds_id IS NULL) <> (invest_id IS NULL)", name="cfo_positions_article_chk"),
+    CheckConstraint(
+        "status IN ('waiting', 'on_review', 'on_approval', 'approved', 'on_revision')",
+        name="cfo_positions_status_chk",
+    ),
+    Index("idx_cfo_positions_cfo_year", "cfo_unit_id", "budget_year"),
+    Index("idx_cfo_positions_status", "status"),
+    Index("idx_cfo_positions_current_step", "current_step_id"),
+    Index(
+        "ux_cfo_positions_dds",
+        "budget_year", "cfo_unit_id", "dds_id",
+        unique=True,
+        postgresql_where=text("dds_id IS NOT NULL"),
+    ),
+    Index(
+        "ux_cfo_positions_invest",
+        "budget_year", "cfo_unit_id", "invest_id",
+        unique=True,
+        postgresql_where=text("invest_id IS NOT NULL"),
+    ),
+)
+
 req_items = Table(
     "req_items", metadata, uuid_pk(),
     Column("request_id", PgUUID(as_uuid=True), ForeignKey("requests.id", ondelete="CASCADE"), nullable=False),
+    Column("cfo_position_id", PgUUID(as_uuid=True), ForeignKey("cfo_positions.id", ondelete="RESTRICT")),
     Column("dds_id", PgUUID(as_uuid=True), ForeignKey("dds_catalog.id", ondelete="RESTRICT")),
     Column("invest_id", PgUUID(as_uuid=True), ForeignKey("invests_catalog.id", ondelete="RESTRICT")),
     Column("is_income", Boolean, nullable=False, server_default=text("false")),
@@ -118,11 +156,19 @@ req_items = Table(
     Column("justification", Text, nullable=False, server_default=text("''")),
     Column("status", Text, nullable=False, server_default=text("'on_review'")),
     Column("comment", Text, nullable=False, server_default=text("''")),
+    Column("analytics_1", Text, nullable=False, server_default=text("''")),
+    Column("analytics_2", Text, nullable=False, server_default=text("''")),
+    Column("analytics_3", Text, nullable=False, server_default=text("''")),
+    Column("analytics_4", Text, nullable=False, server_default=text("''")),
+    Column("analytics_5", Text, nullable=False, server_default=text("''")),
+    Column("frozen", Boolean, nullable=False, server_default=text("false")),
+    Column("fixed", Boolean, nullable=False, server_default=text("false")),
     CheckConstraint("sum_plan >= 0", name="req_items_sum_plan_chk"),
     CheckConstraint("sum_fact >= 0", name="req_items_sum_fact_chk"),
     CheckConstraint("status IN ('on_review', 'rejected', 'approved_with_changes', 'approved', 'deleted')", name="req_items_status_chk"),
     CheckConstraint("(dds_id IS NULL) <> (invest_id IS NULL)", name="req_items_article_chk"),
-    Index("idx_req_items_request_id", "request_id"), Index("idx_req_items_dds_id", "dds_id"), Index("idx_req_items_invest_id", "invest_id"), Index("idx_req_items_status", "status"), Index("idx_req_items_is_income", "is_income"),
+    CheckConstraint("NOT fixed OR frozen", name="req_items_fixed_requires_frozen_chk"),
+    Index("idx_req_items_request_id", "request_id"), Index("idx_req_items_cfo_position_id", "cfo_position_id"), Index("idx_req_items_dds_id", "dds_id"), Index("idx_req_items_invest_id", "invest_id"), Index("idx_req_items_status", "status"), Index("idx_req_items_is_income", "is_income"),
 )
 
 req_item_month_plans = Table(
@@ -147,7 +193,9 @@ storage_objects = Table(
 files = Table(
     "files", metadata, Column("id", BigInteger, primary_key=True, autoincrement=True),
     Column("id_storage_object", BigInteger, ForeignKey("storage_objects.id", ondelete="RESTRICT"), nullable=False),
-    Column("original_name", Text, nullable=False), Index("idx_files_storage_object", "id_storage_object"),
+    Column("original_name", Text, nullable=False), Column("stored_name", Text, nullable=True),
+    Column("is_sanitized", Boolean, nullable=False, server_default=text("false")),
+    Column("sanitization_report", JSONB, nullable=True), Index("idx_files_storage_object", "id_storage_object"),
 )
 
 req_item_files = Table(
@@ -157,14 +205,19 @@ req_item_files = Table(
     PrimaryKeyConstraint("file_id", "req_item_id"), Index("idx_req_item_files_req_item_id", "req_item_id"),
 )
 
-req_chats = Table(
-    "req_chats", metadata, uuid_pk(),
-    Column("req_id", PgUUID(as_uuid=True), ForeignKey("requests.id", ondelete="CASCADE"), nullable=False, unique=True),
+chats = Table(
+    "chats", metadata, uuid_pk(),
+    Column("kind", Text, nullable=False),
+    Column("unit_id", PgUUID(as_uuid=True), ForeignKey("units.id", ondelete="RESTRICT"), nullable=False),
+    Column("budget_year", SmallInteger, nullable=False),
+    CheckConstraint("kind IN ('module_cfo', 'cfo_economist')", name="chats_kind_chk"),
+    CheckConstraint("budget_year BETWEEN 2000 AND 2200", name="chats_budget_year_chk"),
+    Index("ux_chats_kind_unit_budget_year", "kind", "unit_id", "budget_year", unique=True),
 )
 
 chat_messages = Table(
     "chat_messages", metadata, uuid_pk(),
-    Column("chat_id", PgUUID(as_uuid=True), ForeignKey("req_chats.id", ondelete="CASCADE"), nullable=False),
+    Column("chat_id", PgUUID(as_uuid=True), ForeignKey("chats.id", ondelete="CASCADE"), nullable=False),
     Column("reply_to", PgUUID(as_uuid=True), ForeignKey("chat_messages.id", ondelete="SET NULL")),
     Column("sender_id", PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT")),
     Column("text", Text, nullable=False), Column("is_system", Boolean, nullable=False, server_default=text("false")),
@@ -181,7 +234,7 @@ message_files = Table(
 
 chats_participants = Table(
     "chats_participants", metadata,
-    Column("chat_id", PgUUID(as_uuid=True), ForeignKey("req_chats.id", ondelete="CASCADE"), nullable=False),
+    Column("chat_id", PgUUID(as_uuid=True), ForeignKey("chats.id", ondelete="CASCADE"), nullable=False),
     Column("user_id", PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
     Column("last_read_message_id", PgUUID(as_uuid=True), ForeignKey("chat_messages.id", ondelete="SET NULL")),
     PrimaryKeyConstraint("chat_id", "user_id"), Index("idx_chats_participants_user_id", "user_id"),
@@ -198,7 +251,7 @@ req_logs = Table(
 
 steps = Table(
     "steps", metadata, uuid_pk(),
-    Column("user_id", PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+    Column("user_id", PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT")),
     Column("unit_id", PgUUID(as_uuid=True), ForeignKey("units.id", ondelete="RESTRICT")),
     Column("status", Text, nullable=False, server_default=text("'waiting'")),
     CheckConstraint(
@@ -223,19 +276,6 @@ step_edges = Table(
     Index("idx_step_edges_child", "child_step_id"),
 )
 
-request_step_states = Table(
-    "request_step_states", metadata,
-    Column("request_id", PgUUID(as_uuid=True), ForeignKey("requests.id", ondelete="CASCADE"), nullable=False),
-    Column("step_id", PgUUID(as_uuid=True), ForeignKey("steps.id", ondelete="CASCADE"), nullable=False),
-    Column("status", Text, nullable=False, server_default=text("'waiting'")),
-    CheckConstraint(
-        "status IN ('waiting', 'on_approval', 'on_revision', 'approved', 'closed')",
-        name="request_step_states_status_chk",
-    ),
-    PrimaryKeyConstraint("request_id", "step_id"),
-    Index("idx_request_step_states_step_status", "step_id", "status"),
-)
-
 step_logs = Table(
     "step_logs", metadata,
     Column("id", BigInteger, primary_key=True, autoincrement=True),
@@ -247,6 +287,30 @@ step_logs = Table(
 )
 Index("idx_step_logs_step_created_at", step_logs.c.step_id, step_logs.c.created_at.desc())
 Index("idx_step_logs_action", step_logs.c.log["action"].astext)
+
+cfo_position_logs = Table(
+    "cfo_position_logs", metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("cfo_position_id", PgUUID(as_uuid=True), ForeignKey("cfo_positions.id", ondelete="CASCADE"), nullable=False),
+    Column("user_id", PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+    Column("step_id", PgUUID(as_uuid=True), ForeignKey("steps.id", ondelete="SET NULL")),
+    Column("log", JSONB, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Index("idx_cfo_position_logs_position_created", "cfo_position_id", "created_at"),
+    Index("idx_cfo_position_logs_step_id", "step_id"),
+    Index("idx_cfo_position_logs_user_id", "user_id"),
+)
+
+notifications = Table(
+    "notifications", metadata, uuid_pk(),
+    Column("user_id", PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("type", Text, nullable=False),
+    Column("payload", JSONB, nullable=False),
+    Column("read_at", DateTime(timezone=True)),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Index("idx_notifications_user_created", "user_id", "created_at"),
+    Index("idx_notifications_user_read", "user_id", "read_at"),
+)
 
 TABLES = {table.name: table for table in metadata.sorted_tables}
 
