@@ -1,198 +1,297 @@
+import json
 from pathlib import Path
 
 from docx import Document
+from docx.enum.section import WD_SECTION
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Cm, Pt
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Cm, Pt, RGBColor
 
 
-COMMON_SECTIONS = [
-    ("1. Назначение и навигация", [
-        "BudgetBasket предназначен для подготовки, согласования и выгрузки бюджетных заявок. Список доступных страниц и данных зависит от роли пользователя и его назначений в оргструктуре.",
-        "Основные страницы открываются из левого меню. На компьютере меню можно свернуть; на мобильном устройстве оно открывается кнопкой с иконкой меню. В нижней части меню находятся Памятка, профиль и кнопка Выйти.",
-        "В профиле укажите или измените ФИО, телефон, email и ссылку Max. Эти контакты показываются контрагенту на карточке заявки.",
-    ]),
-    ("2. Статусы заявок", [
-        "Черновик — заявка создана, но не направлена на проверку. Её строки и вложения редактирует ответственный сотрудник.",
-        "На проверке — заявка направлена назначенному экономисту. Сотрудник может отозвать её в черновик или отменить, а экономист принимает решения по строкам.",
-        "Утверждена — все строки приняты без изменения плановых сумм. Утверждена с изменениями — все строки приняты, но хотя бы в одной изменена фактическая сумма.",
-        "Частично утверждена — часть строк принята, часть отклонена. Отклонена — ни одна строка не принята. Отменена — работа с заявкой прекращена сотрудником.",
-        "Признак Бюджет зафиксирован означает, что заявку, её строки и файлы нельзя изменить до разморозки экономистом.",
-    ]),
-    ("3. Общий жизненный цикл заявки", [
-        "Сотрудник создаёт черновик, заполняет строки ДДС и инвест-проектов, прикладывает подтверждающие файлы и отправляет заявку.",
-        "Экономист рассматривает строки: утверждает их, утверждает с изменениями либо отклоняет. После решения по всем строкам он завершает проверку.",
-        "При необходимости экономист возвращает незаблокированную завершённую заявку на рассмотрение. Для утверждённого бюджета экономист может включить фиксацию.",
-    ]),
-    ("4. Экспорт заявок", [
-        "На странице Заявки нажмите Настроить экспорт. В окне выберите один или несколько статусов, при необходимости подразделение и переключатель Включить прикреплённые файлы, затем нажмите Экспортировать.",
-        "Без вложений система скачивает XLSX. Если включены вложения, формируется ZIP-архив с XLSX и файлами, разложенными по заявкам и строкам. Экспортируются только доступные пользователю заявки; отменённые не включаются.",
-        "На карточке завершённой заявки кнопка Экспорт Excel выгружает только эту заявку.",
-    ]),
-]
-
-
-ROLE_SECTIONS = {
-    "Администратор": [
-        ("5. Пользователи", [
-            "Страница: Пользователи. Нажмите Добавить пользователя, укажите логин, пароль и роль. При необходимости заполните ФИО и контакты, затем нажмите Создать профиль. Результат — пользователь может войти в систему с назначенной ролью.",
-            "Для изменения нажмите иконку редактирования в строке пользователя, скорректируйте поля и нажмите Сохранить. Для поиска используйте фильтры Роль и Подразделение.",
-            "Роль Сотрудник создаёт заявки, Экономист согласует заявки закреплённых модулей, Администратор настраивает систему и контролирует данные. Назначайте роли до настройки модулей.",
-        ]),
-        ("6. Оргструктура и назначения", [
-            "Страница: Оргструктура. Нажмите Создать подразделение, чтобы создать корневое объединение. На карточке объединения нажмите иконку Добавить модуль, чтобы создать модуль внутри него.",
-            "В форме модуля укажите название, статус, ответственного сотрудника и экономиста. Эти назначения определяют, кто создаёт заявку и кто её проверяет. Без назначенного экономиста сотрудник не сможет отправить заявку.",
-            "Чтобы изменить название, активность или назначения, используйте иконку Редактировать на карточке. Неактивные сущности сохраняются в истории, но не должны применяться в новых операциях.",
-        ]),
-        ("7. НСИ: создание, редактирование и импорт", [
-            "Страница: НСИ. Выберите справочник ДДС или Инвест-проектов и подразделение. Здесь поддерживаются категории и статьи/проекты, которые сотрудник выбирает в строках заявки.",
-            "Для ручного изменения в таблице нажмите иконку редактирования, измените название, категорию, подразделение или признак активности и сохраните. Удаление выполняется через иконку корзины с подтверждением.",
-            "Для импорта откройте управление нужным справочником, нажмите Скачать шаблон, заполните полученный XLSX без изменения его структуры, затем нажмите Импорт и выберите файл. Предварительно загруженные категории и строки проверьте на экране, после чего нажмите Сохранить строки.",
-            "После сохранения система показывает количество созданных и обновлённых записей, а также ошибки. Исправьте указанные ошибки в таблице или исходном файле и повторите сохранение. Настройте соответствие НСИ подразделениям до начала работы сотрудников.",
-        ]),
-        ("8. Контроль", [
-            "Страницы: Сводка и Заявки. На Сводке выберите подразделение и оцените показатели. На странице Заявки используйте фильтр Статус, откройте карточку и проверьте суммы, статусы строк и решения экономиста.",
-            "Администратор имеет доступ к настройке и просмотру всех заявок, но не принимает решения по строкам и не фиксирует бюджет. Эти действия выполняет назначенный экономист.",
-        ]),
-    ],
-    "Экономист": [
-        ("5. Поиск заявки для проверки", [
-            "Страницы: Сводка и Заявки. На Сводке доступны показатели по закреплённым модулям. На странице Заявки выберите в фильтре Статус значение На проверке и откройте нужную заявку.",
-            "В шапке карточки проверьте объединение, суммы План и Утверждено, число строк и контакты ответственного сотрудника. Черновики сотрудников недоступны экономисту.",
-        ]),
-        ("6. Проверка и редактирование строк", [
-            "На карточке откройте раздел Строки ДДС или Строки инвест-проектов. Для каждой строки выберите статус: Утверждено, Утверждено с изменениями или Отказано. Укажите фактическую сумму и комментарий, затем нажмите иконку Сохранить в этой строке.",
-            "Если фактическая сумма совпадает с плановой, выбирайте Утверждено. Если сумма отличается, выбирайте Утверждено с изменениями и указывайте фактическую сумму. При отказе комментарий рекомендуется использовать для объяснения сотруднику.",
-            "Кнопка Зафиксировать все строки утверждает все ещё нерассмотренные строки по плановым суммам и завершает проверку. Нажимайте её только после проверки состава заявки.",
-        ]),
-        ("7. Завершение, возврат и фиксация бюджета", [
-            "Когда решение принято по каждой строке, нажмите Завершить проверку. Система автоматически установит итоговый статус: утверждена, утверждена с изменениями, частично утверждена или отклонена.",
-            "Чтобы исправить итог незаблокированной заявки, нажмите Вернуть на рассмотрение. Заявка снова получит статус На проверке, после чего можно скорректировать решения по строкам.",
-            "Для заявок Утверждена и Утверждена с изменениями нажмите Зафиксировать бюджет. Это запрещает любые изменения. Для снятия запрета нажмите Разморозить бюджет.",
-        ]),
-        ("8. Ограничения роли", [
-            "Экономист не создаёт и не редактирует черновики, не управляет пользователями, оргструктурой и НСИ и не выполняет импорт справочников. Эти операции доступны администратору.",
-        ]),
-    ],
-    "Сотрудник": [
-        ("5. Создание заявки", [
-            "Страница: Заявки. Нажмите Добавить заявку. В диалоге выберите Объединение заявки из доступных подразделений и нажмите Создать заявку. Результат — карточка новой заявки со статусом Черновик.",
-            "На карточке в разделах Строки ДДС и Строки инвест-проектов выберите статью или проект из НСИ, заполните Плановую сумму и нажмите Добавить строку. Вносите только реальные плановые потребности.",
-            "Чтобы приложить подтверждение к новой строке, используйте кнопку Прикрепить файл рядом с добавлением строки. Доступность статей и проектов определяется НСИ и вашим подразделением.",
-        ]),
-        ("6. Редактирование черновика", [
-            "На карточке черновика нажмите Редактировать в блоке строк. Измените статью или проект, плановую сумму, добавьте или отметьте файлы к удалению и нажмите Сохранить. До сохранения изменения не попадут в заявку.",
-            "Для удаления отдельной строки используйте иконку корзины и подтвердите действие. Вместе со строкой удаляются связи с её файлами. В статусе Черновик можно также нажать Удалить заявку и подтвердить удаление всей заявки.",
-        ]),
-        ("7. Отправка, отзыв и отмена", [
-            "Проверьте строки и нажмите Отправить заявку. Для отправки нужен хотя бы один бюджетный элемент и назначенный модулю экономист. Результат — статус На проверке.",
-            "Если до завершения проверки требуется доработка, нажмите Отозвать в черновик. После изменения строк повторно нажмите Отправить заявку. Чтобы прекратить работу с ненужной заявкой, нажмите Отменить заявку.",
-            "После решения экономиста откройте карточку и проверьте статусы строк, фактические суммы и комментарии. Для связи используйте контакты экономиста, показанные на карточке.",
-        ]),
-        ("8. Ограничения роли", [
-            "Сотрудник не согласует строки, не фиксирует бюджет, не управляет пользователями, оргструктурой и НСИ и не выполняет импорт справочников. При отсутствии нужной статьи или проекта обратитесь к администратору.",
-        ]),
-    ],
+ROOT = Path(__file__).resolve().parents[1]
+CONTENT_PATH = ROOT / "frontend" / "src" / "content" / "userGuideContent.json"
+OUTPUT_PATH = ROOT / "docs" / "user-guides" / "BudgetBasket_User_Guide.docx"
+ROLE_ORDER = ("employee", "economist", "approver", "zgd", "admin")
+ROLE_COLORS = {
+    "employee": "2C5F7C",
+    "economist": "2C5F7C",
+    "approver": "2C5F7C",
+    "zgd": "2C5F7C",
+    "admin": "2C5F7C",
 }
 
 
-def add_bullets(document: Document, items: list[str]) -> None:
-    for item in items:
-        document.add_paragraph(item, style="List Bullet")
+def load_content() -> dict:
+    with CONTENT_PATH.open("r", encoding="utf-8") as source:
+        return json.load(source)
 
 
-def add_status_table(document: Document) -> None:
-    document.add_heading("Справочник статусов", level=1)
-    table = document.add_table(rows=1, cols=2)
-    table.style = "Table Grid"
-    table.rows[0].cells[0].text = "Статус"
-    table.rows[0].cells[1].text = "Смысл"
-    rows = [
-        ("Черновик", "Редактируется ответственным сотрудником до отправки."),
-        ("На проверке", "Проверяется назначенным экономистом."),
-        ("Утверждена", "Все строки приняты без изменения плановых сумм."),
-        ("Утверждена с изменениями", "Все строки приняты, часть сумм скорректирована."),
-        ("Частично утверждена", "Есть и принятые, и отклонённые строки."),
-        ("Отклонена", "Все строки отклонены."),
-        ("Отменена", "Сотрудник отменил заявку."),
-    ]
-    for status, meaning in rows:
-        cells = table.add_row().cells
-        cells[0].text = status
-        cells[1].text = meaning
+def keep_with_next(paragraph) -> None:
+    properties = paragraph._p.get_or_add_pPr()
+    properties.append(OxmlElement("w:keepNext"))
 
 
-def add_roles_table(document: Document) -> None:
-    document.add_heading("Назначение ролей", level=1)
-    table = document.add_table(rows=1, cols=3)
-    table.style = "Table Grid"
-    table.rows[0].cells[0].text = "Роль"
-    table.rows[0].cells[1].text = "Назначение"
-    table.rows[0].cells[2].text = "Основные возможности"
-    rows = [
-        (
-            "Администратор",
-            "Настраивает систему и обеспечивает готовность данных для бюджетного процесса.",
-            "Управляет пользователями, оргструктурой и НСИ; видит все заявки, сводку и экспорт.",
-        ),
-        (
-            "Экономист",
-            "Проверяет и утверждает бюджетные потребности закреплённых модулей.",
-            "Рассматривает строки, указывает фактические суммы и комментарии, завершает проверку, возвращает заявку на рассмотрение и фиксирует бюджет.",
-        ),
-        (
-            "Сотрудник",
-            "Готовит бюджетные заявки по назначенным подразделениям.",
-            "Создаёт черновики, добавляет строки и вложения, отправляет заявку, отзывает её для доработки и знакомится с итогом проверки.",
-        ),
-    ]
-    for role, purpose, permissions in rows:
-        cells = table.add_row().cells
-        cells[0].text = role
-        cells[1].text = purpose
-        cells[2].text = permissions
+def shade_cell(cell, fill: str) -> None:
+    properties = cell._tc.get_or_add_tcPr()
+    shading = OxmlElement("w:shd")
+    shading.set(qn("w:fill"), fill)
+    properties.append(shading)
 
 
-def create_guide(target: Path) -> None:
-    document = Document()
-    document.sections[0].top_margin = Cm(1.7)
-    document.sections[0].bottom_margin = Cm(1.7)
+def set_cell_margins(cell, top=100, start=120, bottom=100, end=120) -> None:
+    properties = cell._tc.get_or_add_tcPr()
+    margins = properties.first_child_found_in("w:tcMar")
+    if margins is None:
+        margins = OxmlElement("w:tcMar")
+        properties.append(margins)
+    for margin_name, value in (("top", top), ("start", start), ("bottom", bottom), ("end", end)):
+        node = margins.find(qn(f"w:{margin_name}"))
+        if node is None:
+            node = OxmlElement(f"w:{margin_name}")
+            margins.append(node)
+        node.set(qn("w:w"), str(value))
+        node.set(qn("w:type"), "dxa")
+
+
+def add_page_number(paragraph) -> None:
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = paragraph.add_run()
+    begin = OxmlElement("w:fldChar")
+    begin.set(qn("w:fldCharType"), "begin")
+    instruction = OxmlElement("w:instrText")
+    instruction.set(qn("xml:space"), "preserve")
+    instruction.text = "PAGE"
+    end = OxmlElement("w:fldChar")
+    end.set(qn("w:fldCharType"), "end")
+    run._r.extend((begin, instruction, end))
+
+
+def configure_document(document: Document) -> None:
+    section = document.sections[0]
+    section.top_margin = Cm(1.7)
+    section.bottom_margin = Cm(1.5)
+    section.left_margin = Cm(2)
+    section.right_margin = Cm(1.7)
+    add_page_number(section.footer.paragraphs[0])
+    header = section.header.paragraphs[0]
+    header.text = "BUDGETBASKET  ·  РУКОВОДСТВО ПОЛЬЗОВАТЕЛЯ"
+    header.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    for run in header.runs:
+        run.font.name = "Arial"
+        run.font.size = Pt(8)
+        run.font.color.rgb = RGBColor.from_string("6B7D8A")
+
     normal = document.styles["Normal"]
     normal.font.name = "Arial"
     normal.font.size = Pt(10)
+    normal.paragraph_format.space_after = Pt(5)
+    normal.paragraph_format.line_spacing = 1.12
 
-    title = document.add_heading("Руководство пользователя BudgetBasket", 0)
+    for name, size, color in (
+        ("Title", 25, "173B57"),
+        ("Heading 1", 17, "173B57"),
+        ("Heading 2", 13, "2C5F7C"),
+        ("Heading 3", 11, "2C5F7C"),
+    ):
+        style = document.styles[name]
+        style.font.name = "Arial"
+        style.font.size = Pt(size)
+        style.font.color.rgb = RGBColor.from_string(color)
+        style.font.bold = True
+
+
+def add_cover(document: Document, content: dict) -> None:
+    document.add_paragraph()
+    title = document.add_heading(content["title"], 0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    document.add_paragraph("Версия 1.2 · 17 июля 2026 года")
-    document.add_paragraph("Единое руководство для администратора, экономиста и сотрудника.")
+    subtitle = document.add_paragraph("Полное руководство по текущей версии приложения")
+    subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    subtitle.runs[0].font.size = Pt(14)
+    subtitle.runs[0].font.color.rgb = RGBColor(73, 93, 109)
 
-    for heading, items in COMMON_SECTIONS:
-        document.add_heading(heading, level=1)
-        add_bullets(document, items)
+    document.add_paragraph()
+    meta = document.add_paragraph()
+    meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    meta.add_run(f"Версия {content['version']}\n").bold = True
+    meta.add_run(f"Актуально на {content['updated']}")
 
-    add_roles_table(document)
-    add_status_table(document)
+    document.add_paragraph()
+    intro = document.add_paragraph(content["intro"])
+    intro.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
-    for role, sections in ROLE_SECTIONS.items():
-        document.add_page_break()
-        document.add_heading(f"Работа в роли: {role}", level=1)
-        for heading, items in sections:
-            document.add_heading(heading.split(". ", 1)[-1], level=2)
-            add_bullets(document, items)
+    document.add_paragraph()
+    usage = document.add_paragraph()
+    usage.add_run("Как пользоваться. ").bold = True
+    usage.add_run("Сначала ознакомьтесь с общей частью, затем перейдите к разделу своей роли. В каждом сценарии действия, результат и следующий шаг приведены в одном порядке.")
+    usage.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
-    document.add_heading("Практическая рекомендация", level=1)
-    document.add_paragraph(
-        "Перед завершением операции проверяйте уведомления системы. Если кнопка недоступна или нужные данные отсутствуют, "
-        "проверьте статус заявки и назначения в оргструктуре либо обратитесь к администратору."
+    document.add_paragraph()
+    add_journey(document, content["journey"])
+
+    document.add_page_break()
+
+
+def add_journey(document: Document, stages: list[dict]) -> None:
+    heading = document.add_heading("Как движется бюджет", level=2)
+    keep_with_next(heading)
+    table = document.add_table(rows=2, cols=len(stages))
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.autofit = True
+    for index, stage in enumerate(stages):
+        title_cell = table.cell(0, index)
+        detail_cell = table.cell(1, index)
+        shade_cell(title_cell, "2C5F7C")
+        shade_cell(detail_cell, "EDF4F8")
+        title_cell.text = f"{index + 1}. {stage['title']}"
+        detail_cell.text = stage["detail"]
+        for cell in (title_cell, detail_cell):
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            set_cell_margins(cell, top=90, start=85, bottom=90, end=85)
+        title = title_cell.paragraphs[0]
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        for run in title.runs:
+            run.bold = True
+            run.font.size = Pt(9)
+            run.font.color.rgb = RGBColor(255, 255, 255)
+        detail = detail_cell.paragraphs[0]
+        detail.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        for run in detail.runs:
+            run.font.size = Pt(8)
+
+
+def add_quick_start(document: Document, role_label: str, steps: list[str], color: str) -> None:
+    heading = document.add_heading(f"Быстрый маршрут: {role_label}", level=2)
+    keep_with_next(heading)
+    table = document.add_table(rows=0, cols=2)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.autofit = False
+    for index, step in enumerate(steps):
+        cells = table.add_row().cells
+        cells[0].width = Cm(1)
+        cells[1].width = Cm(16)
+        cells[0].text = str(index + 1)
+        cells[1].text = step
+        shade_cell(cells[0], color)
+        shade_cell(cells[1], "F3F7FA")
+        for cell in cells:
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            set_cell_margins(cell, top=75, start=110, bottom=75, end=110)
+        cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+        for run in cells[0].paragraphs[0].runs:
+            run.bold = True
+            run.font.color.rgb = RGBColor(255, 255, 255)
+        for run in cells[1].paragraphs[0].runs:
+            run.bold = True
+            run.font.size = Pt(9)
+
+
+def add_bullets(document: Document, items: list[str], style: str = "List Bullet") -> None:
+    for item in items:
+        paragraph = document.add_paragraph(item, style=style)
+        paragraph.paragraph_format.left_indent = Cm(0.65)
+        paragraph.paragraph_format.first_line_indent = Cm(-0.3)
+
+
+def add_procedure(document: Document, procedure: dict) -> None:
+    heading = document.add_heading(procedure["title"], level=3)
+    keep_with_next(heading)
+    steps_table = document.add_table(rows=0, cols=2)
+    steps_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    steps_table.autofit = False
+    for index, step in enumerate(procedure["steps"]):
+        cells = steps_table.add_row().cells
+        cells[0].width = Cm(1)
+        cells[1].width = Cm(16)
+        cells[0].text = str(index + 1)
+        cells[1].text = step
+        shade_cell(cells[0], "2C5F7C")
+        shade_cell(cells[1], "F6F8FA" if index % 2 == 0 else "FFFFFF")
+        for cell in cells:
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            set_cell_margins(cell, top=75, start=110, bottom=75, end=110)
+        cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+        for run in cells[0].paragraphs[0].runs:
+            run.bold = True
+            run.font.color.rgb = RGBColor(255, 255, 255)
+
+    outcome_table = document.add_table(rows=1, cols=2)
+    outcome_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    labels = (
+        ("РЕЗУЛЬТАТ", procedure["result"], "E5F2EA", "337357"),
+        ("ЧТО ДАЛЬШЕ", procedure["next"], "E8F2F8", "2C5F7C"),
     )
+    for cell, (label, value, fill, color) in zip(outcome_table.rows[0].cells, labels):
+        shade_cell(cell, fill)
+        set_cell_margins(cell, top=110, start=130, bottom=110, end=130)
+        paragraph = cell.paragraphs[0]
+        label_run = paragraph.add_run(f"{label}\n")
+        label_run.bold = True
+        label_run.font.size = Pt(8)
+        label_run.font.color.rgb = RGBColor.from_string(color)
+        paragraph.add_run(value)
+
+
+def add_notes(document: Document, notes: list[str]) -> None:
+    table = document.add_table(rows=1, cols=1)
+    table.style = "Table Grid"
+    cell = table.cell(0, 0)
+    shade_cell(cell, "FFF4CE")
+    set_cell_margins(cell, top=120, start=150, bottom=120, end=150)
+    title = cell.paragraphs[0]
+    title_run = title.add_run("ВАЖНО")
+    title_run.bold = True
+    title_run.font.color.rgb = RGBColor.from_string("8A5A00")
+    for note in notes:
+        paragraph = cell.add_paragraph(note, style="List Bullet")
+        paragraph.paragraph_format.left_indent = Cm(0.55)
+
+
+def add_section(document: Document, section: dict, level: int = 2) -> None:
+    heading = document.add_heading(section["title"], level=level)
+    keep_with_next(heading)
+    for paragraph_text in section.get("paragraphs", []):
+        paragraph = document.add_paragraph(paragraph_text)
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    if section.get("bullets"):
+        add_bullets(document, section["bullets"])
+    for procedure in section.get("procedures", []):
+        add_procedure(document, procedure)
+    if section.get("notes"):
+        add_notes(document, section["notes"])
+
+
+def create_guide(content: dict, target: Path) -> None:
+    document = Document()
+    configure_document(document)
+    add_cover(document, content)
+
+    document.add_heading("Общая часть", level=1)
+    document.add_paragraph(
+        "Эти правила одинаковы для всех ролей. Названия страниц, кнопок и статусов приведены так, как они показаны в интерфейсе."
+    )
+    add_journey(document, content["journey"])
+    for section in content["common"]:
+        add_section(document, section)
+
+    for role_key in ROLE_ORDER:
+        role = content["roles"][role_key]
+        document.add_section(WD_SECTION.NEW_PAGE)
+        document.add_heading(f"Работа в роли: {role['label']}", level=1)
+        document.add_paragraph(role["intro"])
+        add_quick_start(document, role["label"], role["quickStart"], ROLE_COLORS[role_key])
+        for section in role["sections"]:
+            add_section(document, section)
+
+    target.parent.mkdir(parents=True, exist_ok=True)
     document.save(target)
 
 
 def main() -> None:
-    output_dir = Path(__file__).resolve().parents[1] / "docs" / "user-guides"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    for old_guide in output_dir.glob("BudgetBasket_User_Guide_*.docx"):
-        old_guide.unlink()
-    create_guide(output_dir / "BudgetBasket_User_Guide.docx")
+    content = load_content()
+    create_guide(content, OUTPUT_PATH)
+    print(f"Created {OUTPUT_PATH}")
 
 
 if __name__ == "__main__":

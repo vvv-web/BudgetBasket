@@ -24,6 +24,7 @@ class Settings:
             "ALLOWED_UPLOAD_MIME_TYPES",
             "application/pdf,image/png,image/jpeg,"
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,"
+            "application/vnd.ms-excel.sheet.macroEnabled.12,"
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document,"
             "application/zip",
         ).split(",")

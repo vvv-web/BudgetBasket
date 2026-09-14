@@ -6,8 +6,8 @@ function webSocketUrl(path: string, token: string) {
   return apiUrl.toString();
 }
 
-export function requestChatWebSocketUrl(requestId: string, token: string) {
-  return webSocketUrl(`/ws/requests/${encodeURIComponent(requestId)}/chat`, token);
+export function chatWebSocketUrl(chatId: string, token: string) {
+  return webSocketUrl(`/ws/chats/${encodeURIComponent(chatId)}`, token);
 }
 
 export function chatNotificationsWebSocketUrl(token: string) {

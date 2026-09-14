@@ -17,6 +17,7 @@
     "@mui/icons-material": "^7.3.6",
     "@mui/material": "^7.3.6",
     "@tanstack/react-query": "^5.83.0",
+    "@tanstack/react-virtual": "^3.14.11",
     "axios": "^1.10.0",
     "docx-preview": "^0.4.0",
     "jszip": "^3.10.1",

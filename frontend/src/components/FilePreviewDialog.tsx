@@ -20,30 +20,20 @@ import type { FileAttachment } from '../types';
 import { downloadAuthorized } from '../utils/download';
 
 type PreviewKind = 'image' | 'pdf' | 'docx' | 'xlsx' | 'unsupported';
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 function previewKind(fileName: string, contentType?: string): PreviewKind {
   if (contentType?.startsWith('image/') || /\.(png|jpe?g)$/i.test(fileName)) return 'image';
   if (contentType === 'application/pdf' || /\.pdf$/i.test(fileName)) return 'pdf';
   if (/\.docx$/i.test(fileName)) return 'docx';
-  if (/\.xlsx$/i.test(fileName)) return 'xlsx';
+  if (contentType === XLSX_MIME || /\.xlsx$/i.test(fileName)) return 'xlsx';
   return 'unsupported';
 }
 
-async function expandHiddenSpreadsheetColumns(blob: Blob) {
-  const { default: JSZip } = await import('jszip');
-  const archive = await JSZip.loadAsync(await blob.arrayBuffer());
-  const worksheetFiles = Object.keys(archive.files).filter((path) => /^xl\/worksheets\/sheet\d+\.xml$/i.test(path));
-  await Promise.all(worksheetFiles.map(async (path) => {
-    const entry = archive.file(path);
-    if (!entry) return;
-    const xml = await entry.async('text');
-    archive.file(path, xml.replace(/\s(?:hidden|collapsed)="(?:1|true)"/gi, ''));
-  }));
-  return new Blob(
-    [await archive.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' })],
-    { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
-  );
-}
+const REMOVED_LABELS: Record<string, string> = {
+  vba_macros: 'макросы', active_x: 'элементы ActiveX', ole: 'встроенные объекты',
+  external_links: 'внешние связи', formulas: 'активные формулы', images: 'изображения', charts: 'диаграммы',
+};
 
 export function FilePreviewDialog({
   file,
@@ -80,11 +70,8 @@ export function FilePreviewDialog({
         const contentType = response.headers['content-type'];
         const detectedKind = previewKind(file.original_name, typeof contentType === 'string' ? contentType : undefined);
         if (controller.signal.aborted) return;
-        const previewBlob = detectedKind === 'xlsx'
-          ? await expandHiddenSpreadsheetColumns(response.data)
-          : response.data;
         if (controller.signal.aborted) return;
-        objectUrl = URL.createObjectURL(previewBlob);
+        objectUrl = URL.createObjectURL(response.data);
         setKind(detectedKind);
         setUrl(objectUrl);
       })
@@ -204,7 +191,15 @@ export function FilePreviewDialog({
           <CloseIcon />
         </IconButton>
       </DialogTitle>
-      <DialogContent dividers sx={{ minHeight: { xs: 260, sm: 520 }, display: 'flex', alignItems: 'center', justifyContent: 'center', p: 0 }}>
+      <DialogContent dividers sx={{ minHeight: { xs: 260, sm: 520 }, display: 'flex', flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', p: 0 }}>
+        {file?.is_sanitized && (
+          <Alert severity="info" sx={{ flex: '0 0 auto', m: 1.5 }}>
+            Файл обработан системой безопасности. Для просмотра используется безопасная копия.
+            {(file.sanitization_report?.removed?.length ?? 0) > 0 && (
+              <Typography component="div" variant="body2">Удалено: {file.sanitization_report!.removed!.map((item) => REMOVED_LABELS[item] || item).join(', ')}.</Typography>
+            )}
+          </Alert>
+        )}
         {(!url || processing) && !error && <CircularProgress aria-label="Загрузка файла" />}
         {error && <Alert severity="error" sx={{ m: 3 }}>Не удалось загрузить файл для предпросмотра.</Alert>}
         {url && !processing && kind === 'image' && (
@@ -226,7 +221,7 @@ export function FilePreviewDialog({
         )}
       </DialogContent>
       <DialogActions sx={{ px: 3, py: 2 }}>
-        <Button startIcon={<DownloadIcon />} onClick={() => file && downloadAuthorized(`/files/${file.id}/download`, file.original_name)} disabled={!file}>
+        <Button startIcon={<DownloadIcon />} onClick={() => file && downloadAuthorized(`/files/${file.id}/download`, file.stored_name || file.original_name)} disabled={!file}>
           Скачать
         </Button>
         {showOpenInNewWindow && kind !== 'unsupported' && (

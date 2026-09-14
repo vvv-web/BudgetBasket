@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY tests ./tests
+COPY scripts ./scripts
 COPY db ./db
 COPY alembic ./alembic
 COPY alembic_data ./alembic_data

@@ -4,8 +4,10 @@ import CloseIcon from '@mui/icons-material/Close';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import DownloadIcon from '@mui/icons-material/Download';
 import DragHandleIcon from '@mui/icons-material/DragHandle';
+import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
-import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
+import PhoneOutlinedIcon from '@mui/icons-material/PhoneOutlined';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import UndoIcon from '@mui/icons-material/Undo';
 import ZoomInIcon from '@mui/icons-material/ZoomIn';
@@ -21,6 +23,7 @@ import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
+import Divider from '@mui/material/Divider';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import IconButton from '@mui/material/IconButton';
 import MenuItem from '@mui/material/MenuItem';
@@ -42,18 +45,22 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent, type WheelEven
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import { useAppToast } from '../components/Layout';
+import { PageSkeleton } from '../components/PageSkeleton';
+import { useAppToast, usePageChromeActions, usePageChromeLeading } from '../components/Layout';
 import { RequestStatusBadge, StepStatusBadge } from '../components/StatusBadge';
 import type {
   ApprovalStep,
+  RequestStatus,
   StepLog,
   StepRequest,
   StepStatus,
   User,
 } from '../types';
-import { money, roleLabels, stepStatusLabels } from '../utils/labels';
+import CfoPositionsPage from './CfoPositionsPage';
+import { money, requestStatusLabels, roleLabels, stepStatusLabels } from '../utils/labels';
 import { filterFieldSx } from '../utils/responsive';
 import { downloadAuthorized } from '../utils/download';
+import { stepReadinessLabels, stepViewerRequirement } from '../utils/workflowPresentation';
 
 type EdgeDeletePreviewNode = {
   id: string;
@@ -66,12 +73,22 @@ type EdgeDeletePreviewGraph = {
   edges: { parent_step_id: string; child_step_id: string }[];
 };
 
+type ModuleVisual = NonNullable<ApprovalStep['modules']>[number];
+
 const graphStepStatusTones: Record<StepStatus, { background: string; border: string; color: string }> = {
   waiting: { background: '#F8FAFC', border: '#94A3B8', color: '#475569' },
   on_approval: { background: '#EFF6FF', border: '#2563EB', color: '#1D4ED8' },
   on_revision: { background: '#FFF7ED', border: '#EA580C', color: '#C2410C' },
   approved: { background: '#ECFDF5', border: '#059669', color: '#047857' },
   closed: { background: '#F1F5F9', border: '#64748B', color: '#334155' },
+};
+
+const graphRequestStatusTones: Record<RequestStatus, { background: string; border: string; color: string }> = {
+  draft: { background: '#F3F4F6', border: '#E5E7EB', color: '#6B7280' },
+  on_review: { background: '#FFFBEB', border: '#FDE68A', color: '#D97706' },
+  approved: { background: '#ECFDF5', border: '#A7F3D0', color: '#059669' },
+  rejected: { background: '#FEF2F2', border: '#FECACA', color: '#DC2626' },
+  cancelled: { background: '#FEF2F2', border: '#FECACA', color: '#DC2626' },
 };
 
 type EdgeDeletePreview = {
@@ -81,9 +98,17 @@ type EdgeDeletePreview = {
   affected_leaf_count: number;
   has_approved_past: boolean;
   approved_past_count: number;
+  removes_economist_assignment?: boolean;
+  assignment_removal_reason?: string;
 };
 
 const logActionLabels: Record<string, string> = {
+  automatic_cfo_step_created: 'Автоматически создан шаг ЦФО',
+  automatic_economist_step_created: 'Автоматически создан шаг экономиста',
+  automatic_economist_step_updated: 'Автоматически обновлен шаг экономиста',
+  automatic_economist_link_created: 'Шаг экономиста связан с ЦФО',
+  automatic_economist_inserted_into_route: 'Шаг экономиста добавлен в маршрут',
+  automatic_zgd_step_created: 'Автоматически создан шаг ЗГД',
   step_created: 'Шаг создан',
   step_updated: 'Шаг изменён',
   step_deleted: 'Шаг удалён',
@@ -180,23 +205,80 @@ function personName(user: User | null) {
   return fullName || user.login;
 }
 
+function ApprovalContactInfo({ user }: { user: User | null }) {
+  const profile = user?.profile;
+  return (
+    <Box className="approval-contact-info" onPointerDown={(event) => event.stopPropagation()}>
+      <Typography variant="caption" color="text.secondary" fontWeight={700} noWrap>Контактная информация</Typography>
+      <Stack className="approval-contact-row" direction="row" spacing={1} alignItems="center">
+        <PhoneOutlinedIcon fontSize="small" />
+        <Typography variant="caption" sx={{ overflowWrap: 'anywhere' }}>Телефон: {profile?.phone || 'не указан'}</Typography>
+      </Stack>
+      <Stack className="approval-contact-row" direction="row" spacing={1} alignItems="center">
+        <EmailOutlinedIcon fontSize="small" />
+        <Typography variant="caption" sx={{ overflowWrap: 'anywhere' }}>Эл. почта: {profile?.email || 'не указана'}</Typography>
+      </Stack>
+    </Box>
+  );
+}
+
+function ApprovalAssigneeDisplay({ label, user }: { label: string; user: User | null }) {
+  return (
+    <Box>
+      <Typography variant="caption" color="text.secondary">{label}</Typography>
+      <Typography variant="body2" fontWeight={600} sx={{ overflowWrap: 'anywhere', lineHeight: 1.25 }}>{personName(user)}</Typography>
+    </Box>
+  );
+}
+
 function moduleName(step: ApprovalStep) {
-  const cfoName = step.cfo?.name || step.unit_path.at(-2);
-  const module = step.unit?.name || step.unit_path.at(-1);
-  return [cfoName, module].filter(Boolean).join(' \\ ') || 'Модуль не указан';
+  return step.cfo?.name || step.unit?.name || step.unit_path.at(-1) || 'ЦФО не указан';
 }
 
 function stepName(step: ApprovalStep) {
   if (step.unit_id) return moduleName(step);
+  if (step.is_economist_step) return `Экономист · ${personName(step.user)}`;
   if (step.user?.role === 'zgd') return `ЗГД · ${personName(step.user)}`;
   return personName(step.user);
 }
 
+function stepDisplayStatus(step: ApprovalStep): StepStatus {
+  return step.request_status || step.status;
+}
+
+function stepStatusLabel(step: ApprovalStep): string {
+  const status = stepDisplayStatus(step);
+  if (status === 'on_revision') {
+    const count = step.readiness?.needs_revision || step.revision_positions_count || 0;
+    return count ? `На доработке: ${count}` : 'На доработке';
+  }
+  return stepStatusLabels[status];
+}
+
 function canDeleteApprovalStep(step: ApprovalStep) {
   if (step.unit_id) return false;
+  if (step.is_economist_step) return false;
+  if (step.user?.role === 'zgd') return false;
   if (step.status === 'closed') return false;
   if ((step.active_requests_count || 0) > 0) return false;
   return step.status === 'waiting';
+}
+
+function approvalGraphCfoKey(step: ApprovalStep) {
+  return [
+    step.department?.name || step.unit_path[0] || '',
+    step.cfo?.name || step.unit_path.at(-2) || '',
+  ].join('\u0000');
+}
+
+function readApprovalGraphCfoOrder(storageKey: string) {
+  if (typeof window === 'undefined') return [];
+  try {
+    const value = JSON.parse(window.localStorage.getItem(storageKey) || '[]');
+    return Array.isArray(value) && value.every((item) => typeof item === 'string') ? value : [];
+  } catch {
+    return [];
+  }
 }
 
 function shortRouteLabel(label: string) {
@@ -254,24 +336,41 @@ function EdgeDeleteGraphPreview({
       const column = depth.get(node.id) || 0;
       columns.set(column, [...(columns.get(column) || []), node]);
     });
-    [...columns.values()].forEach((columnNodes) => {
-      columnNodes.sort((a, b) => {
-        const kindOrder = { leaf: 0, review: 1, zgd: 2 };
-        return kindOrder[a.kind] - kindOrder[b.kind] || a.label.localeCompare(b.label, 'ru');
-      });
-    });
-
     const maxColumn = Math.max(0, ...depth.values());
     const positions = new Map<string, { x: number; y: number }>();
     let maxY = nodeHeight;
     for (let column = 0; column <= maxColumn; column += 1) {
       const columnNodes = columns.get(column) || [];
+      if (column === 0) {
+        columnNodes.sort((a, b) => a.label.localeCompare(b.label, 'ru'));
+      } else {
+        // Place each parent beside its children. This keeps the automatic
+        // «ЦФО → экономист» pairs on one row instead of sorting both columns
+        // independently and creating a tangle of crossing lines.
+        columnNodes.sort((a, b) => {
+          const anchor = (node: EdgeDeletePreviewNode) => {
+            const ys = (children.get(node.id) || [])
+              .map((childId) => positions.get(childId)?.y)
+              .filter((y): y is number => y !== undefined);
+            return ys.length ? ys.reduce((sum, y) => sum + y, 0) / ys.length : Number.MAX_SAFE_INTEGER;
+          };
+          return anchor(a) - anchor(b) || a.label.localeCompare(b.label, 'ru');
+        });
+      }
+      let previousBottom = -Infinity;
       columnNodes.forEach((node, index) => {
-        const y = padY + index * (nodeHeight + rowGap);
+        const childYs = (children.get(node.id) || [])
+          .map((childId) => positions.get(childId)?.y)
+          .filter((y): y is number => y !== undefined);
+        const preferredY = childYs.length
+          ? childYs.reduce((sum, y) => sum + y, 0) / childYs.length
+          : padY + index * (nodeHeight + rowGap);
+        const y = Math.max(preferredY, previousBottom + rowGap);
         positions.set(node.id, {
           x: padX + column * (nodeWidth + columnGap),
           y,
         });
+        previousBottom = y + nodeHeight;
         maxY = Math.max(maxY, y + nodeHeight);
       });
     }
@@ -345,7 +444,9 @@ function EdgeDeleteGraphPreview({
                   <rect x={position.x} y={position.y} width="4" height={nodeHeight} rx="2" fill="#2F6FED" />
                   <foreignObject x={position.x + 10} y={position.y + 6} width={nodeWidth - 16} height={nodeHeight - 12}>
                     <div className="approval-edge-delete-preview-node">
-                      <span title={node.label}>{shortRouteLabel(node.label)}</span>
+                      <Tooltip title={node.label || '—'} arrow>
+                        <span>{shortRouteLabel(node.label)}</span>
+                      </Tooltip>
                     </div>
                   </foreignObject>
                 </g>
@@ -368,7 +469,12 @@ function ApprovalGraph({
   onDisconnect,
   onDeleteStep,
   reviewers,
+  employees,
+  economists,
+  onCfoResponsibleChange,
+  onCfoEconomistChange,
   canEdit = true,
+  viewerUserId,
 }: {
   steps: ApprovalStep[];
   selectedStepId: string;
@@ -379,13 +485,20 @@ function ApprovalGraph({
   onDisconnect: (childStepId: string, parentStepId: string) => void;
   onDeleteStep?: (step: ApprovalStep) => void;
   reviewers: User[];
+  employees: User[];
+  economists: User[];
+  onCfoResponsibleChange: (cfoId: string, employeeId: string) => void;
+  onCfoEconomistChange: (cfoIds: string[], economistId: string) => void;
   canEdit?: boolean;
+  viewerUserId?: string;
 }) {
   const [draggedChildId, setDraggedChildId] = useState<string | null>(null);
   const [draggedCfoKey, setDraggedCfoKey] = useState<string | null>(null);
-  const [cfoOrder, setCfoOrder] = useState<string[]>([]);
+  const cfoOrderStorageKey = `budgetbasket:approval-graph:cfo-order:${viewerUserId || 'shared'}`;
+  const [cfoOrder, setCfoOrder] = useState<string[]>(() => readApprovalGraphCfoOrder(cfoOrderStorageKey));
+  const [loadedCfoOrderStorageKey, setLoadedCfoOrderStorageKey] = useState<string | null>(null);
+  const canReorderCfo = true;
   const [openReviewerStepId, setOpenReviewerStepId] = useState<string | null>(null);
-  const [openContactStepId, setOpenContactStepId] = useState<string | null>(null);
   const [hoveredEdgeKey, setHoveredEdgeKey] = useState<string | null>(null);
   const [pendingConnectionChildId, setPendingConnectionChildId] = useState<string | null>(null);
   const [pendingConnectionCursor, setPendingConnectionCursor] = useState<{ x: number; y: number } | null>(null);
@@ -394,6 +507,7 @@ function ApprovalGraph({
   const [isPanning, setIsPanning] = useState(false);
   const graphViewportRef = useRef<HTMLDivElement>(null);
   const hasAutoFramedGraph = useRef(false);
+  const cfoDragPreviewRef = useRef<HTMLElement | null>(null);
   const panStart = useRef({ pointerX: 0, pointerY: 0, x: 0, y: 0 });
   const pendingEmptyClick = useRef<{ pointerX: number; pointerY: number } | null>(null);
   const zoomGestureRef = useRef<{
@@ -411,12 +525,25 @@ function ApprovalGraph({
   );
 
   useEffect(() => {
+    setLoadedCfoOrderStorageKey(null);
+    setCfoOrder(readApprovalGraphCfoOrder(cfoOrderStorageKey));
+    setLoadedCfoOrderStorageKey(cfoOrderStorageKey);
+  }, [cfoOrderStorageKey]);
+
+  useEffect(() => {
+    if (loadedCfoOrderStorageKey !== cfoOrderStorageKey || typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(cfoOrderStorageKey, JSON.stringify(cfoOrder));
+    } catch {
+      // Local storage can be disabled by the browser; the graph still works in memory.
+    }
+  }, [cfoOrder, cfoOrderStorageKey, loadedCfoOrderStorageKey]);
+
+  useEffect(() => {
     hasAutoFramedGraph.current = false;
     setDraggedChildId(null);
     setDraggedCfoKey(null);
-    setCfoOrder([]);
     setOpenReviewerStepId(null);
-    setOpenContactStepId(null);
     setHoveredEdgeKey(null);
     setPendingConnectionChildId(null);
     setPendingConnectionCursor(null);
@@ -427,6 +554,28 @@ function ApprovalGraph({
 
   const layout = useMemo(() => {
     const byId = new Map(steps.map((step) => [step.id, step]));
+    const zgdStepIds = new Set(
+      steps.filter((step) => !step.unit_id && step.user?.role === 'zgd').map((step) => step.id),
+    );
+    const stepsOnZgdRoute = new Set<string>();
+    const markZgdRoute = (stepId: string) => {
+      if (stepsOnZgdRoute.has(stepId)) return;
+      const step = byId.get(stepId);
+      if (!step) return;
+      stepsOnZgdRoute.add(stepId);
+      step.child_step_ids.forEach(markZgdRoute);
+    };
+    zgdStepIds.forEach(markZgdRoute);
+    const graphSteps = canEdit || !zgdStepIds.size
+      ? steps
+      : steps.filter((step) => stepsOnZgdRoute.has(step.id));
+    const graphStepIds = new Set(graphSteps.map((step) => step.id));
+    const childIdsFor = (step: ApprovalStep) => (step.child_step_ids || []).filter(
+      (childId) => graphStepIds.has(childId) && (
+        !zgdStepIds.size
+        || (stepsOnZgdRoute.has(step.id) ? stepsOnZgdRoute.has(childId) : !stepsOnZgdRoute.has(childId))
+      ),
+    );
     const depth = new Map<string, number>();
     const visiting = new Set<string>();
     const resolveDepth = (stepId: string): number => {
@@ -434,219 +583,389 @@ function ApprovalGraph({
       if (visiting.has(stepId)) return 0;
       visiting.add(stepId);
       const step = byId.get(stepId);
-      const childDepths = (step?.child_step_ids || []).map(resolveDepth);
+      const childDepths = step ? childIdsFor(step).map(resolveDepth) : [];
       visiting.delete(stepId);
       const value = childDepths.length ? Math.max(...childDepths) + 1 : 0;
       depth.set(stepId, value);
       return value;
     };
-    steps.forEach((step) => resolveDepth(step.id));
+    graphSteps.forEach((step) => resolveDepth(step.id));
     const columns = new Map<number, ApprovalStep[]>();
-    steps.forEach((step) => {
+    graphSteps.forEach((step) => {
       const column = depth.get(step.id) || 0;
       columns.set(column, [...(columns.get(column) || []), step]);
     });
-    const routeKey = (step: ApprovalStep): string => {
-      const roots = new Set<string>();
-      const collectRoots = (stepId: string, visited = new Set<string>()) => {
-        if (visited.has(stepId)) return;
-        visited.add(stepId);
-        const current = byId.get(stepId);
-        if (!current?.parent_step_ids.length) {
-          roots.add(stepId);
-          return;
-        }
-        current.parent_step_ids.forEach((parentId) => collectRoots(parentId, visited));
-      };
-      collectRoots(step.id);
-      return [...roots].sort().join(':');
-    };
-    const groupKey = (step: ApprovalStep) => [
-      routeKey(step),
-      step.department?.name || step.unit_path[0] || '',
-      step.cfo?.name || step.unit_path.at(-2) || '',
-    ].join('\u0000');
-    const isPartOfRoute = (step: ApprovalStep) => Boolean(step.parent_step_ids.length || step.child_step_ids.length);
     for (const column of columns.values()) {
       column.sort((left, right) => {
-        const routeComparison = Number(isPartOfRoute(right)) - Number(isPartOfRoute(left));
-        if (routeComparison) return routeComparison;
-        const groupComparison = groupKey(left).localeCompare(groupKey(right), 'ru');
+        const groupComparison = approvalGraphCfoKey(left).localeCompare(approvalGraphCfoKey(right), 'ru');
         if (groupComparison) return groupComparison;
         return (left.unit?.name || left.user?.login || '').localeCompare(right.unit?.name || right.user?.login || '', 'ru');
       });
     }
     const nodeWidth = 280;
-    const leafNodeHeight = 184;
-    const nodeHeightFor = (step: ApprovalStep) => {
-      if (step.unit_id) return leafNodeHeight;
-      const contactsExpanded = openContactStepId === step.id;
-      return step.user?.role === 'zgd'
-        ? (contactsExpanded ? 192 : 160)
-        : (contactsExpanded ? 208 : 160);
+    const minCardHeight = 236;
+    const moduleCardWidth = nodeWidth;
+    const textLines = (value: string | null | undefined, charactersPerLine = 32) => Math.max(
+      1,
+      Math.ceil((value || '').length / charactersPerLine),
+    );
+    const contactExtraHeight = (user: User | null) => {
+      const profile = user?.profile;
+      return (
+        Math.max(0, textLines(`Телефон: ${profile?.phone || 'не указан'}`, 34) - 1) * 17
+        + Math.max(0, textLines(`Эл. почта: ${profile?.email || 'не указана'}`, 30) - 1) * 17
+      );
     };
-    const nodeHeights = new Map(steps.map((step) => [step.id, nodeHeightFor(step)]));
+    const moduleCardHeightFor = (module: ModuleVisual) => (
+      minCardHeight
+      + Math.max(0, textLines(module.name, 25) - 1) * 22
+      + Math.max(0, textLines(personName(module.responsible), 31) - 1) * 17
+      + Math.max(0, module.request_statuses.length - 1) * 22
+      + contactExtraHeight(module.responsible)
+    );
+    const nodeHeightFor = (step: ApprovalStep) => {
+      const isViewerStep = Boolean(viewerUserId) && (
+        step.unit_id ? step.responsible?.id === viewerUserId : step.user?.id === viewerUserId
+      );
+      const viewerMessageHeight = isViewerStep ? 28 : 0;
+      const title = step.unit_id
+        ? moduleName(step)
+        : step.is_economist_step ? 'Экономист' : step.user?.role === 'zgd' ? 'ЗГД' : 'Проверяющий';
+      const assignee = step.unit_id ? personName(step.responsible) : personName(step.user);
+      return (
+        minCardHeight
+        + Math.max(0, textLines(title, 25) - 1) * 22
+        + Math.max(0, textLines(stepStatusLabel(step), 28) - 1) * 20
+        + stepReadinessLabels(step).reduce((height, label) => height + textLines(label, 30) * 17, 0)
+        + Math.max(0, textLines(assignee, 30) - 1) * 18
+        + contactExtraHeight(step.unit_id ? step.responsible : step.user)
+        + viewerMessageHeight
+      );
+    };
+    const nodeHeights = new Map(graphSteps.map((step) => [step.id, nodeHeightFor(step)]));
     const horizontalGap = 112;
     const verticalGap = 28;
-    const rowSize = leafNodeHeight + verticalGap;
     const poolWidth = 72;
     const poolGap = 8;
     const poolLeft = 24;
     const graphLeft = poolLeft + poolWidth * 2 + poolGap * 2 + 28;
     const positions = new Map<string, { x: number; y: number }>();
+    const moduleCards: Array<{ module: ModuleVisual; stepId: string; x: number; y: number; height: number }> = [];
     const leafColumn = (columns.get(0) || []).filter((step) => Boolean(step.unit_id));
-    const cfoKey = (step: ApprovalStep) => [
-      step.department?.name || step.unit_path[0] || '',
-      step.cfo?.name || step.unit_path.at(-2) || '',
-    ].join('\u0000');
-    const cfoRank = new Map([...new Set([...cfoOrder, ...leafColumn.map(cfoKey)])].map((key, index) => [key, index]));
-    leafColumn.sort((left, right) => {
-      const departmentComparison = (left.department?.name || left.unit_path[0] || '').localeCompare(
-        right.department?.name || right.unit_path[0] || '',
-        'ru',
-      );
-      if (departmentComparison) return departmentComparison;
-      const cfoComparison = (cfoRank.get(cfoKey(left)) || 0) - (cfoRank.get(cfoKey(right)) || 0);
-      if (cfoComparison) return cfoComparison;
-      const routeComparison = Number(isPartOfRoute(right)) - Number(isPartOfRoute(left));
-      if (routeComparison) return routeComparison;
-      return groupKey(left).localeCompare(groupKey(right), 'ru');
-    });
-    let leafRow = 0;
-    let previousLeafGroup = '';
+    const cfoKey = approvalGraphCfoKey;
+    const canonicalCfoOrder = [...new Set(leafColumn.map(cfoKey))].sort((left, right) => left.localeCompare(right, 'ru'));
+    const orderedCfoKeys = [
+      ...cfoOrder.filter((key) => canonicalCfoOrder.includes(key)),
+      ...canonicalCfoOrder.filter((key) => !cfoOrder.includes(key)),
+    ];
+    const cfoRank = new Map(orderedCfoKeys.map((key, index) => [key, index]));
+    const terminalZgdKey = new Map<string, string>();
+    const resolveTerminalZgdKey = (stepId: string, visiting = new Set<string>()): string => {
+      if (terminalZgdKey.has(stepId)) return terminalZgdKey.get(stepId)!;
+      if (visiting.has(stepId)) return '';
+      visiting.add(stepId);
+      const step = byId.get(stepId);
+      const terminalIds = step && zgdStepIds.has(stepId)
+        ? [stepId]
+        : [...new Set((step && !stepsOnZgdRoute.has(stepId) ? [] : step?.parent_step_ids || []).flatMap((parentId) => (
+          resolveTerminalZgdKey(parentId, visiting).split('|').filter(Boolean)
+        )))].sort();
+      visiting.delete(stepId);
+      const key = terminalIds.join('|');
+      terminalZgdKey.set(stepId, key);
+      return key;
+    };
+    leafColumn.forEach((step) => resolveTerminalZgdKey(step.id));
+    const leafBlocks = new Map<string, { height: number; moduleHeights: number[]; modulesHeight: number }>();
     leafColumn.forEach((step) => {
-      const currentGroup = groupKey(step);
-      if (previousLeafGroup && previousLeafGroup !== currentGroup) leafRow += 0.35;
-      positions.set(step.id, { x: graphLeft, y: 96 + leafRow * rowSize });
-      previousLeafGroup = currentGroup;
-      leafRow += 1;
+      const moduleHeights = (step.modules || []).map(moduleCardHeightFor);
+      const modulesHeight = moduleHeights.length
+        ? moduleHeights.reduce((total, height) => total + height, 0) + Math.max(0, moduleHeights.length - 1) * verticalGap
+        : minCardHeight;
+      leafBlocks.set(step.id, {
+        height: Math.max(nodeHeights.get(step.id) || minCardHeight, modulesHeight),
+        moduleHeights,
+        modulesHeight,
+      });
     });
 
-    const reviewerSteps = steps.filter((step) => !step.unit_id && step.user?.role !== 'zgd');
-    const reviewerColumns = new Map<number, ApprovalStep[]>();
-    reviewerSteps.forEach((step) => {
-      const column = Math.max(1, depth.get(step.id) || 1);
-      reviewerColumns.set(column, [...(reviewerColumns.get(column) || []), step]);
+    const visibleParents = new Map<string, string[]>();
+    graphSteps.forEach((step) => {
+      childIdsFor(step).forEach((childId) => {
+        visibleParents.set(childId, [...(visibleParents.get(childId) || []), step.id]);
+      });
     });
+
+    type BranchOrder = { rank: number; key: string };
+    const branchOrderCache = new Map<string, BranchOrder>();
+    const branchOrderFor = (stepId: string, visiting = new Set<string>()): BranchOrder => {
+      const cached = branchOrderCache.get(stepId);
+      if (cached) return cached;
+      if (visiting.has(stepId)) return { rank: Number.MAX_SAFE_INTEGER, key: '' };
+      visiting.add(stepId);
+      const step = byId.get(stepId);
+      const ownOrder = step?.unit_id
+        ? { rank: cfoRank.get(cfoKey(step)) ?? Number.MAX_SAFE_INTEGER, key: cfoKey(step) }
+        : undefined;
+      const childOrders = step
+        ? childIdsFor(step).map((childId) => branchOrderFor(childId, visiting))
+        : [];
+      visiting.delete(stepId);
+      const result = [...(ownOrder ? [ownOrder] : []), ...childOrders].sort(
+        (left, right) => left.rank - right.rank || left.key.localeCompare(right.key, 'ru'),
+      )[0] || { rank: Number.MAX_SAFE_INTEGER, key: '' };
+      branchOrderCache.set(stepId, result);
+      return result;
+    };
+    const compareBranchIds = (leftId: string, rightId: string) => {
+      const leftOrder = branchOrderFor(leftId);
+      const rightOrder = branchOrderFor(rightId);
+      return leftOrder.rank - rightOrder.rank
+        || leftOrder.key.localeCompare(rightOrder.key, 'ru')
+        || (byId.get(leftId)?.unit?.name || byId.get(leftId)?.user?.login || '').localeCompare(
+          byId.get(rightId)?.unit?.name || byId.get(rightId)?.user?.login || '',
+          'ru',
+        );
+    };
+
+    const blockHeights = new Map<string, number>();
+    const blockVisiting = new Set<string>();
+    const blockHeightFor = (stepId: string): number => {
+      const cached = blockHeights.get(stepId);
+      if (cached !== undefined) return cached;
+      const step = byId.get(stepId);
+      if (!step || blockVisiting.has(stepId)) return nodeHeights.get(stepId) || minCardHeight;
+      blockVisiting.add(stepId);
+      const children = childIdsFor(step).sort(compareBranchIds);
+      const childrenHeight = children.length
+        ? children.reduce((total, childId) => total + blockHeightFor(childId), 0) + (children.length - 1) * verticalGap
+        : 0;
+      const ownHeight = step.unit_id
+        ? leafBlocks.get(step.id)?.height || nodeHeights.get(step.id) || minCardHeight
+        : nodeHeights.get(step.id) || minCardHeight;
+      const height = Math.max(ownHeight, childrenHeight);
+      blockVisiting.delete(stepId);
+      blockHeights.set(stepId, height);
+      return height;
+    };
+    graphSteps.forEach((step) => blockHeightFor(step.id));
+
     // Размещаем проверяющих по глубине маршрута: следующий этап всегда правее предыдущего.
-    [...reviewerColumns.keys()].sort((left, right) => left - right).forEach((column) => {
-      const reviewersInColumn = reviewerColumns.get(column)!;
-      const positioned = reviewersInColumn.map((step, index) => {
-        const childY = step.child_step_ids
-          .map((childId) => positions.get(childId)?.y)
-          .filter((value): value is number => value !== undefined);
-        return {
-          step,
-          preferredY: childY.length
-            ? childY.reduce((total, value) => total + value, 0) / childY.length
-            : 96 + index * rowSize,
-        };
-      }).sort((left, right) => left.preferredY - right.preferredY);
-      let columnY = 96;
-      positioned.forEach(({ step, preferredY }) => {
-        const y = Math.max(preferredY, columnY);
-        positions.set(step.id, {
-          x: graphLeft + column * (nodeWidth + horizontalGap),
-          y,
-        });
-        columnY = y + (nodeHeights.get(step.id) || leafNodeHeight) + verticalGap;
-      });
-    });
-    const lastReviewerColumn = Math.max(0, ...reviewerColumns.keys());
-    const zgdColumn = lastReviewerColumn + 1;
+    const lastReviewerColumn = Math.max(0, ...graphSteps
+      .filter((step) => !step.unit_id && step.user?.role !== 'zgd')
+      .map((step) => Math.max(1, depth.get(step.id) || 1)));
+    const zgdColumn = lastReviewerColumn + 2;
     const zgdX = graphLeft + zgdColumn * (nodeWidth + horizontalGap);
-    const zgdSteps = steps.filter((step) => !step.unit_id && step.user?.role === 'zgd');
-    zgdSteps.forEach((step, index) => {
-      const childY = step.child_step_ids
-        .map((childId) => positions.get(childId)?.y)
-        .filter((value): value is number => value !== undefined);
-      positions.set(step.id, {
-        x: zgdX,
-        y: childY.length ? childY.reduce((total, value) => total + value, 0) / childY.length : 96 + index * rowSize,
+    const nodeXFor = (step: ApprovalStep) => step.user?.role === 'zgd'
+      ? zgdX
+      : graphLeft + ((depth.get(step.id) || 0) + 1) * (nodeWidth + horizontalGap);
+    const placed = new Set<string>();
+    const placeSubtree = (stepId: string, top: number) => {
+      const step = byId.get(stepId);
+      if (!step || placed.has(stepId)) return;
+      const children = childIdsFor(step).sort(compareBranchIds);
+      const blockHeight = blockHeightFor(stepId);
+      const ownHeight = step.unit_id
+        ? leafBlocks.get(step.id)?.height || nodeHeights.get(step.id) || minCardHeight
+        : nodeHeights.get(step.id) || minCardHeight;
+      const childrenHeight = children.length
+        ? children.reduce((total, childId) => total + blockHeightFor(childId), 0) + (children.length - 1) * verticalGap
+        : 0;
+      const childrenTop = top + Math.max(0, (blockHeight - childrenHeight) / 2);
+      let childTop = childrenTop;
+      children.forEach((childId) => {
+        placeSubtree(childId, childTop);
+        childTop += blockHeightFor(childId) + verticalGap;
       });
+      const nodeHeight = nodeHeights.get(step.id) || minCardHeight;
+      positions.set(step.id, {
+        x: nodeXFor(step),
+        y: top + (blockHeight - nodeHeight) / 2,
+      });
+      placed.add(stepId);
+      if (step.unit_id) {
+        const leafBlock = leafBlocks.get(step.id);
+        let moduleY = top + Math.max(0, (blockHeight - (leafBlock?.modulesHeight || minCardHeight)) / 2);
+        (step.modules || []).forEach((module, moduleIndex) => {
+          const height = leafBlock?.moduleHeights[moduleIndex] || minCardHeight;
+          moduleCards.push({ module, stepId: step.id, x: graphLeft, y: moduleY, height });
+          moduleY += height + verticalGap;
+        });
+      }
+    };
+    const rootSteps = graphSteps
+      .filter((step) => !(visibleParents.get(step.id) || []).length)
+      .sort((left, right) => Number(right.user?.role === 'zgd') - Number(left.user?.role === 'zgd') || compareBranchIds(left.id, right.id));
+    let nextRootY = 96;
+    rootSteps.forEach((step) => {
+      placeSubtree(step.id, nextRootY);
+      nextRootY += blockHeightFor(step.id) + verticalGap;
     });
-    const maxY = Math.max(96, ...steps.map((step) => {
-      const position = positions.get(step.id)!;
-      return position.y + (nodeHeights.get(step.id) || leafNodeHeight);
-    }));
-    const deepestStep = steps.reduce((current, step) => (
+    graphSteps.forEach((step) => {
+      if (placed.has(step.id)) return;
+      placeSubtree(step.id, nextRootY);
+      nextRootY += blockHeightFor(step.id) + verticalGap;
+    });
+    const orderedLeafColumn = [...leafColumn].sort((left, right) => (
+      (positions.get(left.id)?.y || 0) - (positions.get(right.id)?.y || 0)
+    ));
+    const leafTreeKey = new Map(leafColumn.map((step) => [
+      step.id,
+      [cfoKey(step), terminalZgdKey.get(step.id) || ''].join('\u0001'),
+    ]));
+    const maxY = Math.max(
+      96,
+      ...graphSteps.map((step) => {
+        const position = positions.get(step.id)!;
+        return position.y + (nodeHeights.get(step.id) || minCardHeight);
+      }),
+      ...moduleCards.map((card) => card.y + card.height),
+    );
+    const deepestStep = graphSteps.reduce((current, step) => (
       (depth.get(step.id) || 0) > (depth.get(current.id) || 0) ? step : current
-    ), steps[0]);
+    ), graphSteps[0]);
     const longestChain: ApprovalStep[] = [];
     let chainStep: ApprovalStep | undefined = deepestStep;
     while (chainStep) {
       longestChain.push(chainStep);
-      chainStep = chainStep.child_step_ids
+      chainStep = childIdsFor(chainStep)
         .map((childId) => byId.get(childId))
         .filter((step): step is ApprovalStep => Boolean(step))
         .sort((left, right) => (depth.get(right.id) || 0) - (depth.get(left.id) || 0))[0];
     }
     const longestChainPositions = longestChain.map((step) => positions.get(step.id)!);
-    const longestRouteY = Math.min(...longestChainPositions.map((position) => position.y));
+    const longestRouteY = Math.min(
+      ...longestChainPositions.map((position) => position.y),
+      ...moduleCards.map((card) => card.y),
+    );
+    const longestRouteBottom = Math.max(
+      ...longestChain.map((step) => {
+        const position = positions.get(step.id)!;
+        return position.y + (nodeHeights.get(step.id) || minCardHeight);
+      }),
+      ...moduleCards.map((card) => card.y + card.height),
+    );
     const longestRouteBounds = {
       x: poolLeft,
       y: longestRouteY,
       width: Math.max(...longestChainPositions.map((position) => position.x + nodeWidth)) - poolLeft,
-      height: Math.max(...longestChain.map((step) => {
-        const position = positions.get(step.id)!;
-        return position.y + (nodeHeights.get(step.id) || leafNodeHeight);
-      })) - longestRouteY,
+      height: longestRouteBottom - longestRouteY,
     };
     const departmentPools: Array<{ name: string; y: number; height: number }> = [];
-    const cfoPools: Array<{ id: string; name: string; y: number; height: number }> = [];
-    leafColumn.forEach((step) => {
+    const cfoPools: Array<{ id: string; name: string; y: number; height: number; treeKey: string }> = [];
+    orderedLeafColumn.forEach((step) => {
       const position = positions.get(step.id)!;
+      const relatedModules = moduleCards.filter((card) => card.stepId === step.id);
+      const top = Math.min(position.y, ...relatedModules.map((card) => card.y));
+      const bottom = Math.max(
+        position.y + (nodeHeights.get(step.id) || minCardHeight),
+        ...relatedModules.map((card) => card.y + card.height),
+      );
+      const height = bottom - top;
       const department = step.department?.name || step.unit_path[0] || 'Не указано';
       const cfo = step.cfo?.name || step.unit_path.at(-2) || 'Не указано';
       const previousDepartment = departmentPools.at(-1);
       if (previousDepartment?.name === department) {
-        previousDepartment.height = position.y + leafNodeHeight - previousDepartment.y;
+        previousDepartment.height = top + height - previousDepartment.y;
       } else {
-        departmentPools.push({ name: department, y: position.y, height: leafNodeHeight });
+        departmentPools.push({ name: department, y: top, height });
       }
       const previousCfo = cfoPools.at(-1);
-      if (previousCfo?.id === cfoKey(step) && previousDepartment?.name === department) {
-        previousCfo.height = position.y + leafNodeHeight - previousCfo.y;
+      if (
+        previousCfo?.id === cfoKey(step)
+        && previousDepartment?.name === department
+        && previousCfo.treeKey === leafTreeKey.get(step.id)
+      ) {
+        previousCfo.height = top + height - previousCfo.y;
       } else {
-        cfoPools.push({ id: cfoKey(step), name: cfo, y: position.y, height: leafNodeHeight });
+        cfoPools.push({
+          id: cfoKey(step),
+          name: cfo,
+          y: top,
+          height,
+          treeKey: leafTreeKey.get(step.id) || cfoKey(step),
+        });
       }
     });
+    const graphNodes = [
+      ...graphSteps.map((step) => {
+        const position = positions.get(step.id)!;
+        return { x: position.x, y: position.y, width: nodeWidth, height: nodeHeights.get(step.id) || minCardHeight };
+      }),
+      ...moduleCards.map((card) => ({ x: card.x, y: card.y, width: moduleCardWidth, height: card.height })),
+    ];
+    const graphBounds = {
+      x: Math.min(...graphNodes.map((node) => node.x)),
+      y: Math.min(...graphNodes.map((node) => node.y)),
+      width: Math.max(...graphNodes.map((node) => node.x + node.width)) - Math.min(...graphNodes.map((node) => node.x)),
+      height: Math.max(...graphNodes.map((node) => node.y + node.height)) - Math.min(...graphNodes.map((node) => node.y)),
+    };
     return {
       positions,
+      moduleCards,
+      renderSteps: graphSteps,
       departmentPools,
       cfoPools,
       longestRouteBounds,
+      graphBounds,
       poolLeft,
       poolWidth,
       poolGap,
       nodeWidth,
+      moduleCardWidth,
       nodeHeights,
-      reviewerArea: { x: graphLeft + nodeWidth + horizontalGap - 24, y: 48, width: nodeWidth + 48, height: maxY + 24 },
+      reviewerArea: { x: graphLeft + 2 * (nodeWidth + horizontalGap) - 24, y: 48, width: nodeWidth + 48, height: maxY + 24 },
       width: zgdX + nodeWidth + 112,
       height: maxY + 96,
     };
-  }, [steps, openContactStepId, cfoOrder]);
+  }, [steps, cfoOrder, viewerUserId]);
+
+  const clampPan = (nextPan: { x: number; y: number }, nextZoom = zoom) => {
+    const viewport = graphViewportRef.current;
+    if (!viewport) return nextPan;
+    const padding = 28;
+    const clampAxis = (translation: number, start: number, length: number, viewportLength: number) => {
+      const scaledLength = length * nextZoom;
+      if (scaledLength <= viewportLength - padding * 2) {
+        return (viewportLength - scaledLength) / 2 - start * nextZoom;
+      }
+      const minimum = viewportLength - padding - (start + length) * nextZoom;
+      const maximum = padding - start * nextZoom;
+      return Math.min(maximum, Math.max(minimum, translation));
+    };
+    return {
+      x: clampAxis(nextPan.x, layout.graphBounds.x, layout.graphBounds.width, viewport.clientWidth),
+      y: clampAxis(nextPan.y, layout.graphBounds.y, layout.graphBounds.height, viewport.clientHeight),
+    };
+  };
+
+  const fitViewport = () => {
+    const viewport = graphViewportRef.current;
+    if (!viewport) return;
+    const availableWidth = Math.max(1, viewport.clientWidth - 56);
+    const availableHeight = Math.max(1, viewport.clientHeight - 56);
+    const fittedZoom = Math.max(0.1, Math.min(
+      1,
+      Number(Math.min(availableWidth / layout.graphBounds.width, availableHeight / layout.graphBounds.height).toFixed(2)),
+    ));
+    setZoom(fittedZoom);
+    setPan(clampPan({ x: 0, y: 0 }, fittedZoom));
+  };
 
   useEffect(() => {
     const viewport = graphViewportRef.current;
     if (!viewport || !steps.length || hasAutoFramedGraph.current) return;
-    const availableWidth = Math.max(1, viewport.clientWidth - 48);
-    const availableHeight = Math.max(1, viewport.clientHeight - 48);
-    const { longestRouteBounds } = layout;
-    const fittedZoom = Math.max(0.1, Math.min(
-      1,
-      Number(Math.min(
-        availableWidth / longestRouteBounds.width,
-        availableHeight / longestRouteBounds.height,
-      ).toFixed(2)),
-    ));
-    setZoom(fittedZoom);
-    setPan({
-      x: (viewport.clientWidth - longestRouteBounds.width * fittedZoom) / 2 - longestRouteBounds.x * fittedZoom,
-      y: (viewport.clientHeight - longestRouteBounds.height * fittedZoom) / 2 - longestRouteBounds.y * fittedZoom,
-    });
+    fitViewport();
     hasAutoFramedGraph.current = true;
-  }, [layout.longestRouteBounds, steps.length]);
+  }, [layout.graphBounds, steps.length]);
+
+  useEffect(() => {
+    const viewport = graphViewportRef.current;
+    if (!viewport) return;
+    const observer = new ResizeObserver(() => setPan((current) => clampPan(current)));
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [layout.graphBounds, zoom]);
 
   useEffect(() => {
     const cancelPendingConnection = (event: KeyboardEvent) => {
@@ -659,16 +978,22 @@ function ApprovalGraph({
     return () => window.removeEventListener('keydown', cancelPendingConnection);
   }, [pendingConnectionChildId]);
 
+  useEffect(() => () => {
+    cfoDragPreviewRef.current?.remove();
+    cfoDragPreviewRef.current = null;
+  }, []);
+
   if (!steps.length) {
-    return <Alert severity="info">Листовые шаги появятся автоматически, когда ответственный отправит первую заявку модуля на проверку.</Alert>;
+    return <Alert severity="info">Автоматические шаги ЦФО и ЗГД создаются при запуске сервиса. Обновите страницу, если они еще не появились.</Alert>;
   }
 
   const changeZoom = (delta: number) => {
-    setZoom((current) => Math.max(0.1, Number((current + delta).toFixed(2))));
+    const nextZoom = Math.max(0.1, Number((zoom + delta).toFixed(2)));
+    setZoom(nextZoom);
+    setPan((current) => clampPan(current, nextZoom));
   };
   const resetViewport = () => {
-    setZoom(0.75);
-    setPan({ x: 72, y: 56 });
+    fitViewport();
   };
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -702,7 +1027,7 @@ function ApprovalGraph({
       return;
     }
     if (!isPanning) return;
-    setPan({ x: panStart.current.x + event.clientX - panStart.current.pointerX, y: panStart.current.y + event.clientY - panStart.current.pointerY });
+    setPan(clampPan({ x: panStart.current.x + event.clientX - panStart.current.pointerX, y: panStart.current.y + event.clientY - panStart.current.pointerY }));
   };
   const stopPanning = (event: PointerEvent<HTMLDivElement>) => {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
@@ -740,10 +1065,10 @@ function ApprovalGraph({
       const anchorX = (gesture.pointerX - gesture.pan.x) / gesture.zoom;
       const anchorY = (gesture.pointerY - gesture.pan.y) / gesture.zoom;
       setZoom(nextZoom);
-      setPan({
+      setPan(clampPan({
         x: gesture.pointerX - anchorX * nextZoom,
         y: gesture.pointerY - anchorY * nextZoom,
-      });
+      }, nextZoom));
       if (zoomGestureTimer.current) clearTimeout(zoomGestureTimer.current);
       zoomGestureTimer.current = setTimeout(() => {
         zoomGestureRef.current = null;
@@ -751,7 +1076,7 @@ function ApprovalGraph({
       }, 140);
       return;
     }
-    setPan((current) => ({ ...current, y: current.y - event.deltaY }));
+    setPan((current) => clampPan({ ...current, y: current.y - event.deltaY }));
   };
   const reorderCfo = (sourceKey: string, targetKey: string) => {
     if (sourceKey === targetKey || sourceKey.split('\u0000')[0] !== targetKey.split('\u0000')[0]) return;
@@ -768,10 +1093,7 @@ function ApprovalGraph({
 
   return (
     <>
-      <Stack className="org-chart-toolbar" direction="row" alignItems="center" justifyContent="space-between">
-        <Button variant="outlined" size="small" startIcon={<AddIcon />} onClick={() => onCreateStep()} disabled={!canEdit} sx={{ visibility: canEdit ? 'visible' : 'hidden' }}>
-          Добавить проверяющего
-        </Button>
+      <Stack className="org-chart-toolbar" direction="row" alignItems="center" justifyContent="flex-end">
         <Stack direction="row" spacing={0.5} alignItems="center">
           <Typography className="org-chart-zoom-value" variant="caption">{Math.round(zoom * 100)}%</Typography>
           <Tooltip title="Отдалить"><span><IconButton size="small" onClick={() => changeZoom(-0.1)} disabled={zoom <= 0.1} aria-label="Отдалить граф"><ZoomOutIcon fontSize="small" /></IconButton></span></Tooltip>
@@ -801,7 +1123,25 @@ function ApprovalGraph({
           const bend = Math.max(36, Math.abs(x2 - x1) / 2);
           return <path className="approval-pending-edge" d={`M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`} fill="none" />;
         })()}
-        {steps.flatMap((parent) => parent.child_step_ids.map((childId) => ({ parent, childId }))).map(({ parent, childId }) => {
+        {layout.moduleCards.map((card) => {
+          const cfo = layout.positions.get(card.stepId);
+          if (!cfo) return null;
+          const x1 = card.x + layout.moduleCardWidth;
+          const y1 = card.y + card.height / 2;
+          const x2 = cfo.x;
+          const y2 = cfo.y + (layout.nodeHeights.get(card.stepId) || 0) / 2;
+          const bend = Math.max(32, (x2 - x1) / 2);
+          return (
+            <path
+              key={`module-edge:${card.module.id}:${card.stepId}`}
+              d={`M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`}
+              fill="none"
+              stroke="#263238"
+              strokeWidth="1.7"
+            />
+          );
+        })}
+        {layout.renderSteps.flatMap((parent) => parent.child_step_ids.map((childId) => ({ parent, childId }))).map(({ parent, childId }) => {
           const child = layout.positions.get(childId);
           const parentPosition = layout.positions.get(parent.id);
           if (!child || !parentPosition) return null;
@@ -846,17 +1186,25 @@ function ApprovalGraph({
         ))}
         {layout.cfoPools.map((pool) => (
           <Box
-            key={`cfo:${pool.id}`}
-            className={`approval-graph-pool ${canEdit ? 'is-draggable' : ''} ${draggedCfoKey === pool.id ? 'is-dragging' : ''}`}
-            draggable={canEdit}
+            key={`cfo:${pool.id}:${pool.treeKey}`}
+            className={`approval-graph-pool ${canReorderCfo ? 'is-draggable' : ''} ${draggedCfoKey === pool.id ? 'is-dragging' : ''}`}
+            draggable={canReorderCfo}
             onDragStart={(event) => {
               event.stopPropagation();
               event.dataTransfer.effectAllowed = 'move';
               event.dataTransfer.setData('text/plain', pool.id);
+              cfoDragPreviewRef.current?.remove();
+              const dragPreview = document.createElement('div');
+              dragPreview.className = 'approval-cfo-drag-preview';
+              dragPreview.textContent = pool.name;
+              dragPreview.setAttribute('aria-hidden', 'true');
+              document.body.appendChild(dragPreview);
+              cfoDragPreviewRef.current = dragPreview;
+              event.dataTransfer.setDragImage(dragPreview, dragPreview.offsetWidth / 2, dragPreview.offsetHeight / 2);
               setDraggedCfoKey(pool.id);
             }}
             onDragOver={(event) => {
-              if (canEdit && draggedCfoKey && draggedCfoKey !== pool.id && draggedCfoKey.split('\u0000')[0] === pool.id.split('\u0000')[0]) {
+              if (canReorderCfo && draggedCfoKey && draggedCfoKey !== pool.id && draggedCfoKey.split('\u0000')[0] === pool.id.split('\u0000')[0]) {
                 event.preventDefault();
               }
             }}
@@ -865,27 +1213,96 @@ function ApprovalGraph({
               if (draggedCfoKey) reorderCfo(draggedCfoKey, pool.id);
               setDraggedCfoKey(null);
             }}
-            onDragEnd={() => setDraggedCfoKey(null)}
+            onDragEnd={() => {
+              setDraggedCfoKey(null);
+              cfoDragPreviewRef.current?.remove();
+              cfoDragPreviewRef.current = null;
+            }}
             sx={{ left: layout.poolLeft + layout.poolWidth + layout.poolGap, top: pool.y, width: layout.poolWidth, height: pool.height }}
           >
-            {canEdit && <DragHandleIcon className="approval-cfo-drag-handle" fontSize="small" aria-label="Переместить ЦФО" />}
+            {canReorderCfo && <DragHandleIcon className="approval-cfo-drag-handle" fontSize="small" aria-label="Переместить ЦФО" />}
             <Box className="approval-graph-pool-content">
               <Typography variant="body2" fontWeight={700}>{pool.name}</Typography>
             </Box>
           </Box>
         ))}
-        {steps.map((step) => {
+        {layout.moduleCards.map((card) => {
+          const isViewerModuleResponsible = Boolean(viewerUserId) && card.module.responsible?.id === viewerUserId;
+          return (
+          <Card
+            key={`module-card:${card.module.id}:${card.stepId}`}
+            className={`approval-graph-card is-module ${isViewerModuleResponsible ? 'is-viewer' : ''}`}
+            sx={{
+              left: card.x,
+              top: card.y,
+              width: layout.moduleCardWidth,
+              height: card.height,
+              bgcolor: '#fff',
+              borderColor: isViewerModuleResponsible ? '#2563EB' : '#60A5FA',
+              boxShadow: isViewerModuleResponsible ? '0 0 0 3px rgba(37, 99, 235, 0.2), 0 8px 20px rgba(37, 99, 235, 0.16)' : undefined,
+            }}
+          >
+            <Stack className="approval-graph-card-content" spacing={0.75}>
+              <Stack className="approval-graph-card-header" direction="row" spacing={0.5} alignItems="flex-start" justifyContent="space-between">
+                <Typography variant="subtitle2" fontWeight={800} sx={{ lineHeight: 1.3 }}>{card.module.name}</Typography>
+                {isViewerModuleResponsible && <Chip label="Вы" size="small" color="primary" sx={{ height: 20, fontWeight: 700 }} />}
+              </Stack>
+              <Divider />
+              <Stack className="approval-graph-card-statuses" spacing={0.5} alignItems="flex-start">
+                {card.module.request_statuses.map(({ status, count }) => {
+                  const tone = graphRequestStatusTones[status as RequestStatus];
+                  return (
+                    <Chip
+                      key={status}
+                      className="approval-graph-status"
+                      size="small"
+                      variant="outlined"
+                      label={`${requestStatusLabels[status as RequestStatus]}: ${count}`}
+                      sx={{
+                        height: 'auto',
+                        bgcolor: tone.background,
+                        borderColor: tone.border,
+                        color: tone.color,
+                        fontWeight: 700,
+                        '& .MuiChip-label': { display: 'block', py: 0.45, whiteSpace: 'normal', lineHeight: 1.2 },
+                      }}
+                    />
+                  );
+                })}
+                {!card.module.request_statuses.length && <Typography variant="caption" color="text.secondary">Заявок нет</Typography>}
+              </Stack>
+              <Box className="approval-graph-card-assignee" sx={{ pt: 0.75 }}>
+                <ApprovalAssigneeDisplay label="Ответственный за модуль" user={card.module.responsible} />
+              </Box>
+              <Divider />
+              <ApprovalContactInfo user={card.module.responsible} />
+            </Stack>
+          </Card>
+          );
+        })}
+        {layout.renderSteps.map((step) => {
           const position = layout.positions.get(step.id)!;
           const isLeaf = Boolean(step.unit_id);
+          const isEconomistStep = Boolean(step.is_economist_step);
           const isFinal = !isLeaf && step.user?.role === 'zgd';
           const isSelected = step.id === selectedStepId;
-          const contact = step.user?.profile;
-          const isContactOpen = openContactStepId === step.id;
-          const statusTone = graphStepStatusTones[step.status];
+          // `responsible` describes the CFO owner on a leaf step. Economist
+          // and reviewer steps may carry that same contextual field, but their
+          // current performer is exclusively `user`.
+          const isViewerStep = Boolean(viewerUserId) && (
+            isLeaf
+              ? step.responsible?.id === viewerUserId
+              : step.user?.id === viewerUserId
+          );
+          const contactUser = isLeaf ? step.responsible : step.user;
+          const displayStatus = stepDisplayStatus(step);
+          const statusTone = graphStepStatusTones[displayStatus];
+          const viewerRequirement = viewerUserId ? stepViewerRequirement(step, viewerUserId) : null;
+          const readinessLabels = stepReadinessLabels(step);
           return (
             <Card
               key={step.id}
-              className={`approval-graph-card ${isLeaf ? 'is-leaf' : 'is-review'} is-status-${step.status} ${isFinal ? 'is-final' : ''} ${isSelected ? 'is-selected' : ''} ${canEdit && pendingConnectionChildId && !isLeaf && pendingConnectionChildId !== step.id ? 'is-connect-target' : ''}`}
+              className={`approval-graph-card ${isLeaf ? 'is-leaf' : 'is-review'} ${isEconomistStep ? 'is-economist' : ''} is-status-${displayStatus} ${isFinal ? 'is-final' : ''} ${isSelected ? 'is-selected' : ''} ${isViewerStep ? 'is-viewer' : ''} ${canEdit && pendingConnectionChildId && !isLeaf && pendingConnectionChildId !== step.id ? 'is-connect-target' : ''}`}
               onClick={() => {
                 if (canEdit && pendingConnectionChildId && !isLeaf && pendingConnectionChildId !== step.id) {
                   onConnect(pendingConnectionChildId, step.id);
@@ -903,38 +1320,48 @@ function ApprovalGraph({
                 if (canEdit && draggedChildId && draggedChildId !== step.id && !isLeaf) onConnect(draggedChildId, step.id);
                 setDraggedChildId(null);
               }}
-              sx={{ left: position.x, top: position.y, width: layout.nodeWidth, height: layout.nodeHeights.get(step.id), overflow: 'visible' }}
+              sx={{
+                left: position.x,
+                top: position.y,
+                width: layout.nodeWidth,
+                height: layout.nodeHeights.get(step.id),
+                overflow: 'visible',
+                borderColor: isViewerStep ? '#2563EB' : undefined,
+                boxShadow: isViewerStep ? '0 0 0 3px rgba(37, 99, 235, 0.2), 0 8px 20px rgba(37, 99, 235, 0.16)' : undefined,
+              }}
             >
-              <Stack spacing={0.75} sx={{ p: 1.5, height: '100%' }}>
-                <Stack spacing={0.5} alignItems="flex-start">
-                  <Stack direction="row" spacing={0.5} alignItems="flex-start" justifyContent="space-between" sx={{ width: '100%' }}>
-                    <Typography variant="subtitle2" fontWeight={800} sx={{ lineHeight: 1.3 }}>
-                      {isLeaf ? moduleName(step) : step.user?.role === 'zgd' ? 'ЗГД' : 'Проверяющий'}
-                    </Typography>
-                    {canEdit && onDeleteStep && canDeleteApprovalStep(step) && (
-                      <Tooltip title="Удалить шаг">
-                        <IconButton
-                          size="small"
-                          color="error"
-                          className="approval-step-delete"
-                          aria-label="Удалить шаг"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onDeleteStep(step);
-                          }}
-                          onPointerDown={(event) => event.stopPropagation()}
-                          sx={{ p: 0.25, width: 22, height: 22, mt: -0.25, mr: -0.5 }}
-                        >
-                          <CloseIcon sx={{ fontSize: 16 }} />
-                        </IconButton>
-                      </Tooltip>
-                    )}
-                  </Stack>
+              <Stack className="approval-graph-card-content" spacing={0.75}>
+                <Stack className="approval-graph-card-header" direction="row" spacing={0.5} alignItems="flex-start" justifyContent="space-between">
+                  <Typography variant="subtitle2" fontWeight={800} sx={{ lineHeight: 1.3 }}>
+                    {isLeaf ? moduleName(step) : isEconomistStep ? 'Экономист' : step.user?.role === 'zgd' ? 'ЗГД' : 'Проверяющий'}
+                  </Typography>
+                  {isViewerStep && <Chip label="Вы" size="small" color="primary" sx={{ height: 20, fontWeight: 700, flexShrink: 0 }} />}
+                  {canEdit && onDeleteStep && canDeleteApprovalStep(step) && (
+                    <Tooltip title="Удалить шаг">
+                      <IconButton
+                        size="small"
+                        color="error"
+                        className="approval-step-delete"
+                        aria-label="Удалить шаг"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onDeleteStep(step);
+                        }}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        sx={{ p: 0.25, width: 22, height: 22, mt: -0.25, mr: -0.5 }}
+                      >
+                        <CloseIcon sx={{ fontSize: 16 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                </Stack>
+                <Divider />
+                <Stack className="approval-graph-card-statuses" spacing={0.5} alignItems="flex-start">
                   <Chip
                     className="approval-graph-status"
                     size="small"
                     variant="outlined"
-                    label={stepStatusLabels[step.status]}
+                    label={stepStatusLabel(step)}
                     sx={{
                       height: 'auto',
                       bgcolor: statusTone.background,
@@ -944,25 +1371,76 @@ function ApprovalGraph({
                       '& .MuiChip-label': { display: 'block', py: 0.45, whiteSpace: 'normal', lineHeight: 1.2 },
                     }}
                   />
+                  {readinessLabels.map((label) => (
+                    <Typography key={label} variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, lineHeight: 1.25 }}>
+                      {label}
+                    </Typography>
+                  ))}
+                  {viewerRequirement && !readinessLabels.length && (
+                    <Typography
+                      variant="caption"
+                      fontWeight={700}
+                      sx={{ color: displayStatus === 'on_approval' || displayStatus === 'on_revision' ? 'warning.dark' : 'text.secondary' }}
+                    >
+                      {viewerRequirement}
+                    </Typography>
+                  )}
                 </Stack>
+                <Box className="approval-graph-card-assignee" sx={{ pt: 0.75 }}>
                 {isLeaf ? (
                   <>
-                    <Tooltip title={step.department?.name || 'Подразделение не указано'}>
-                      <Typography variant="caption" color="text.secondary" noWrap><strong>Подразделение:</strong> {step.department?.name || '—'}</Typography>
-                    </Tooltip>
-                    <Typography variant="body2"><strong>Ответственный:</strong> {personName(step.responsible)}</Typography>
-                    <Typography variant="body2"><strong>Экономист:</strong> {personName(step.user)}</Typography>
+                    <Box onPointerDown={(event) => event.stopPropagation()}>
+                      {canEdit ? (
+                        <Stack spacing={0.7}>
+                          <TextField
+                            select
+                            size="small"
+                            label="Ответственный ЦФО"
+                            value={step.responsible?.id || ''}
+                            onClick={(event) => event.stopPropagation()}
+                            onChange={(event) => onCfoResponsibleChange(step.unit_id!, event.target.value)}
+                            fullWidth
+                          >
+                            {employees.map((employee) => (
+                              <MenuItem key={employee.id} value={employee.id}>{personName(employee)}</MenuItem>
+                            ))}
+                          </TextField>
+                        </Stack>
+                      ) : (
+                        <ApprovalAssigneeDisplay label="Ответственный ЦФО" user={step.responsible} />
+                      )}
+                    </Box>
                   </>
                 ) : (
                   <>
                     {isFinal ? (
                       <Typography variant="body2" fontWeight={700} mt="auto">{personName(step.user)}</Typography>
+                    ) : isEconomistStep ? (
+                      <Box onPointerDown={(event) => event.stopPropagation()} sx={{ mt: 'auto' }}>
+                        {canEdit ? (
+                          <TextField
+                            select
+                            size="small"
+                            label="Ответственный ЦФО"
+                            value={step.user?.id || ''}
+                            onClick={(event) => event.stopPropagation()}
+                            onChange={(event) => onCfoEconomistChange(step.cfo_unit_ids || [], event.target.value)}
+                            fullWidth
+                          >
+                            {economists.map((economist) => (
+                              <MenuItem key={economist.id} value={economist.id}>{personName(economist)}</MenuItem>
+                            ))}
+                          </TextField>
+                        ) : (
+                          <ApprovalAssigneeDisplay label="Ответственный ЦФО" user={step.user} />
+                        )}
+                      </Box>
                     ) : (
                       <Box className="approval-reviewer-select" sx={{ mt: 'auto' }} onPointerDown={(event) => event.stopPropagation()}>
                         <Box
-                          className="approval-reviewer-select-trigger"
-                          role="button"
-                          tabIndex={0}
+                          className={`approval-reviewer-assignee ${canEdit ? 'is-editable' : ''}`}
+                          role={canEdit ? 'button' : undefined}
+                          tabIndex={canEdit ? 0 : undefined}
                           aria-expanded={openReviewerStepId === step.id}
                           onClick={(event) => {
                             if (!canEdit) return;
@@ -977,8 +1455,7 @@ function ApprovalGraph({
                             }
                           }}
                         >
-                          <Typography variant="body2" noWrap>{personName(step.user)}</Typography>
-                          <KeyboardArrowDownIcon fontSize="small" />
+                          <ApprovalAssigneeDisplay label="Согласующий" user={step.user} />
                         </Box>
                         {canEdit && openReviewerStepId === step.id && (
                           <Paper className="approval-reviewer-select-menu" elevation={6}>
@@ -1000,36 +1477,11 @@ function ApprovalGraph({
                         )}
                       </Box>
                     )}
-                    <Box className="approval-contact" onPointerDown={(event) => event.stopPropagation()}>
-                        <Box
-                          className="approval-contact-toggle"
-                          role="button"
-                          tabIndex={0}
-                          aria-expanded={isContactOpen}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setOpenContactStepId((current) => current === step.id ? null : step.id);
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault();
-                              setOpenContactStepId((current) => current === step.id ? null : step.id);
-                            }
-                          }}
-                        >
-                          <Typography variant="caption" color="text.secondary">Контактная информация</Typography>
-                          <KeyboardArrowDownIcon className={isContactOpen ? 'is-open' : ''} fontSize="small" />
-                        </Box>
-                        {isContactOpen && (
-                          <Stack spacing={0.25} sx={{ pt: 0.25 }}>
-                            {contact?.phone && <Typography variant="caption">{contact.phone}</Typography>}
-                            {contact?.email && <Typography variant="caption" noWrap>{contact.email}</Typography>}
-                            {!contact?.phone && !contact?.email && <Typography variant="caption" color="text.secondary">Контактные данные не указаны</Typography>}
-                          </Stack>
-                        )}
-                    </Box>
                   </>
                 )}
+                </Box>
+                <Divider />
+                <ApprovalContactInfo user={contactUser} />
                 {canEdit && !isLeaf && (
                   <Box className="approval-graph-link-handle is-inbound" aria-hidden="true">
                     <AddIcon fontSize="small" />
@@ -1084,7 +1536,7 @@ function ApprovalGraph({
   );
 }
 
-function AdminApprovalPage() {
+function AdminApprovalPage({ viewerUserId }: { viewerUserId: string }) {
   const toast = useAppToast();
   const theme = useTheme();
   const fullScreenDialog = useMediaQuery(theme.breakpoints.down('sm'));
@@ -1169,6 +1621,33 @@ function AdminApprovalPage() {
     },
     onError: (error) => toast(errorMessage(error, 'Не удалось обновить шаг'), 'error'),
   });
+  const setCfoResponsible = useMutation({
+    mutationFn: ({ cfoId, employeeId }: { cfoId: string; employeeId: string }) => (
+      api.post(`/units/${cfoId}/responsible`, { user_id: employeeId })
+    ),
+    onSuccess: () => {
+      toast('Ответственный ЦФО обновлён в составе юнита', 'success');
+      refresh();
+      queryClient.invalidateQueries({ queryKey: ['units'] });
+    },
+    onError: (error) => toast(errorMessage(error, 'Не удалось назначить ответственного ЦФО'), 'error'),
+  });
+  const setCfoEconomist = useMutation({
+    mutationFn: ({ cfoIds, economistId }: { cfoIds: string[]; economistId: string }) => Promise.all(
+      cfoIds.map((cfoId) => api.post('/economist-assignments', {
+        unit_id: cfoId,
+        economist_id: economistId,
+        assignment_type: 'cfo',
+      })),
+    ),
+    onSuccess: () => {
+      toast('Экономист ЦФО обновлён в составе юнита', 'success');
+      refresh();
+      queryClient.invalidateQueries({ queryKey: ['economist-assignments'] });
+      queryClient.invalidateQueries({ queryKey: ['units'] });
+    },
+    onError: (error) => toast(errorMessage(error, 'Не удалось назначить экономиста ЦФО'), 'error'),
+  });
   const deleteStep = useMutation({
     mutationFn: (id: string) => api.delete(`/steps/${id}`),
     onSuccess: () => {
@@ -1243,11 +1722,27 @@ function AdminApprovalPage() {
     setDialogUserId('');
     setStepDialog({ kind: 'create', childStepId });
   };
+  usePageChromeLeading(
+    <Box className="page-heading-stack">
+      <Typography className="page-heading-title" component="h1">Маршрут согласования</Typography>
+      <Typography className="page-heading-subtitle" variant="body2" color="text.secondary">
+        Стрелки показывают движение заявки: от модуля и экономиста к проверяющим, затем к ЗГД. Наведите курсор на карточку и перетащите кнопку «+» на проверяющего или ЗГД, чтобы создать связь.
+      </Typography>
+    </Box>,
+  );
+  usePageChromeActions(
+    <Button startIcon={<AddIcon />} variant="outlined" onClick={() => openCreateStep()}>
+      Добавить проверяющего
+    </Button>,
+  );
   const linkedChildName = stepDialog?.kind === 'create' && stepDialog.childStepId
     ? stepNames.get(stepDialog.childStepId)
     : null;
+  if (stepsPending && !steps) {
+    return <PageSkeleton variant="details" label="Загрузка графа согласования" />;
+  }
   return (
-    <Stack spacing={3}>
+    <Stack className="approval-page" spacing={3}>
       <Box sx={{ display: 'none' }}>
         <Typography variant="h5">Маршрут согласования</Typography>
         <Typography color="text.secondary" sx={{ mt: 0.5 }}>
@@ -1263,28 +1758,23 @@ function AdminApprovalPage() {
         </Alert>
       )}</Box>
 
-      <Paper className="surface-pad">
-        <Stack spacing={1.5}>
-          <Typography variant="h6">Граф шагов</Typography>
-          <Typography variant="body2" color="text.secondary">
-            Стрелка показывает движение заявки: от модуля и экономиста к проверяющим, затем к ЗГД. Наведите курсор на карточку и перетащите кнопку «+» на проверяющего или ЗГД, чтобы создать связь. Клик по пустому месту при активной пунктирной линии создаёт новый привязанный шаг.
-          </Typography>
-          {stepsPending && !steps ? (
-            <Typography color="text.secondary">Загрузка графа маршрута…</Typography>
-          ) : (
-            <ApprovalGraph
-              steps={resolvedSteps}
-              selectedStepId={selectedStepId}
-              onSelect={setSelectedStepId}
-              onCreateStep={openCreateStep}
-              onAssign={(step, userId) => patchStep.mutate({ id: step.id, patch: { user_id: userId } })}
-              onConnect={(childStepId, parentStepId) => createEdge.mutate({ child_step_id: childStepId, parent_step_id: parentStepId })}
-              onDisconnect={openEdgeDelete}
-              onDeleteStep={setStepDeleteTarget}
-              reviewers={eligibleUsers.filter((user) => user.role === 'approver')}
-            />
-          )}
-        </Stack>
+      <Paper className="org-chart-panel" elevation={0}>
+        <ApprovalGraph
+            steps={resolvedSteps}
+            selectedStepId={selectedStepId}
+            onSelect={setSelectedStepId}
+            onCreateStep={openCreateStep}
+            onAssign={(step, userId) => patchStep.mutate({ id: step.id, patch: { user_id: userId } })}
+            onConnect={(childStepId, parentStepId) => createEdge.mutate({ child_step_id: childStepId, parent_step_id: parentStepId })}
+            onDisconnect={openEdgeDelete}
+            onDeleteStep={setStepDeleteTarget}
+            reviewers={eligibleUsers.filter((user) => user.role === 'approver')}
+            employees={users.filter((user) => user.role === 'employee')}
+            economists={users.filter((user) => user.role === 'economist')}
+            onCfoResponsibleChange={(cfoId, employeeId) => setCfoResponsible.mutate({ cfoId, employeeId })}
+            onCfoEconomistChange={(cfoIds, economistId) => setCfoEconomist.mutate({ cfoIds, economistId })}
+            viewerUserId={viewerUserId}
+          />
       </Paper>
 
       <Box sx={{ display: 'none' }}>
@@ -1328,13 +1818,16 @@ function AdminApprovalPage() {
                 <TableCell>{step.child_step_ids.map((id) => stepNames.get(id) || id.slice(0, 8)).join(', ') || '—'}</TableCell>
                 <TableCell align="right">
                   <Tooltip title="Удалить шаг">
-                    <IconButton
-                      color="error"
-                      onClick={() => setStepDeleteTarget(step)}
-                      disabled={!canDeleteApprovalStep(step)}
-                    >
-                      <DeleteOutlineIcon />
-                    </IconButton>
+                    <span>
+                      <IconButton
+                        color="error"
+                        onClick={() => setStepDeleteTarget(step)}
+                        disabled={!canDeleteApprovalStep(step)}
+                        aria-label="Удалить шаг"
+                      >
+                        <DeleteOutlineIcon />
+                      </IconButton>
+                    </span>
                   </Tooltip>
                 </TableCell>
               </TableRow>
@@ -1488,6 +1981,9 @@ function AdminApprovalPage() {
               Связь: {stepNames.get(edgeDelete?.child_step_id || '') || '—'} → {stepNames.get(edgeDelete?.parent_step_id || '') || '—'}
             </Typography>
             {edgeDelete?.loading && <Typography variant="body2" color="text.secondary">Готовим превью маршрута…</Typography>}
+            {edgeDelete?.preview?.removes_economist_assignment && (
+              <Alert severity="warning">{edgeDelete.preview.assignment_removal_reason}</Alert>
+            )}
             {edgeDelete?.preview?.has_approved_past && (
               <Alert severity="warning">
                 По этой связи уже есть пройденные согласования дальше по маршруту ({edgeDelete.preview.approved_past_count}).
@@ -1656,7 +2152,7 @@ function UserApprovalPage({ user }: { user: User }) {
   );
   const canForwardAnyPackage = !isLeaf && !isFinal && readyPackages.length > 0;
 
-  if (isLoading) return <CircularProgress />;
+  if (isLoading) return <PageSkeleton variant="table" label="Загрузка согласования" />;
   if (!steps.length) {
     return <Alert severity="info">Вам пока не назначены шаги согласования.</Alert>;
   }
@@ -1683,11 +2179,11 @@ function UserApprovalPage({ user }: { user: User }) {
           >
             {steps.map((step) => (
               <MenuItem key={step.id} value={step.id}>
-                {stepName(step)} · {stepStatusLabels[step.status]}
+                {stepName(step)} · {stepStatusLabels[stepDisplayStatus(step)]}
               </MenuItem>
             ))}
           </TextField>
-          {selectedStep && <StepStatusBadge status={selectedStep.status} />}
+          {selectedStep && <StepStatusBadge status={stepDisplayStatus(selectedStep)} />}
           <Box flex={1} />
           <Button
             startIcon={<DownloadIcon />}
@@ -1823,8 +2319,11 @@ function UserApprovalPage({ user }: { user: User }) {
                   <TableCell>{item.reviewed_items_count} / {item.items_count}</TableCell>
                   <TableCell>
                     <Stack direction="row" spacing={0.5}>
-                      {item.frozen && <Chip size="small" label="Заморожена" color="warning" variant="outlined" />}
-                      {item.fixed && <Chip size="small" label="Зафиксирована ЗГД" color="success" variant="outlined" />}
+                      {item.fixed ? (
+                        <Tooltip title="Зафиксирована ЗГД" arrow><LockOutlinedIcon aria-label="Зафиксирована ЗГД" color="success" fontSize="small" /></Tooltip>
+                      ) : item.frozen ? (
+                        <Tooltip title="Заморожена" arrow><LockOutlinedIcon aria-label="Заморожена" color="warning" fontSize="small" /></Tooltip>
+                      ) : null}
                     </Stack>
                   </TableCell>
                 </TableRow>
@@ -1952,7 +2451,7 @@ function RouteGraphPage() {
     if (!selectedStepId && steps.length) setSelectedStepId(steps[0].id);
   }, [selectedStepId, steps]);
 
-  if (isLoading) return <CircularProgress />;
+  if (isLoading) return <PageSkeleton variant="details" label="Загрузка маршрута согласования" />;
 
   return (
     <Paper className="org-chart-card" sx={{ p: 2, minHeight: 'calc(100vh - 132px)' }}>
@@ -1966,10 +2465,41 @@ function RouteGraphPage() {
         onDisconnect={() => undefined}
         onDeleteStep={() => undefined}
         reviewers={[]}
+        employees={[]}
+        economists={[]}
+        onCfoResponsibleChange={() => undefined}
+        onCfoEconomistChange={() => undefined}
         canEdit={false}
       />
     </Paper>
   );
+}
+
+function ReadOnlyApprovalGraph({ steps, viewerUserId }: { steps: ApprovalStep[]; viewerUserId: string }) {
+  const [selectedStepId, setSelectedStepId] = useState('');
+  useEffect(() => {
+    if (!steps.some((step) => step.id === selectedStepId)) {
+      setSelectedStepId(steps[0]?.id || '');
+    }
+  }, [selectedStepId, steps]);
+  if (!steps.length) return null;
+  return <Paper className="org-chart-card" sx={{ p: 2, minHeight: 'calc(100vh - 132px)' }}><ApprovalGraph
+    steps={steps}
+    selectedStepId={selectedStepId}
+    onSelect={setSelectedStepId}
+    onCreateStep={() => undefined}
+    onAssign={() => undefined}
+    onConnect={() => undefined}
+    onDisconnect={() => undefined}
+    onDeleteStep={() => undefined}
+    reviewers={[]}
+    employees={[]}
+    economists={[]}
+    onCfoResponsibleChange={() => undefined}
+    onCfoEconomistChange={() => undefined}
+    canEdit={false}
+    viewerUserId={viewerUserId}
+  /></Paper>;
 }
 
 function SimpleUserApprovalPage({ user }: { user: User }) {
@@ -1978,7 +2508,7 @@ function SimpleUserApprovalPage({ user }: { user: User }) {
     queryFn: async () => (await api.get<ApprovalStep[]>('/steps/my')).data,
   });
 
-  if (isLoading) return <CircularProgress />;
+  if (isLoading) return <PageSkeleton variant="table" label="Загрузка согласования" />;
   return (
     <Stack spacing={3}>
       <Box>
@@ -1997,5 +2527,5 @@ function SimpleUserApprovalPage({ user }: { user: User }) {
 }
 
 export default function ApprovalPage({ user }: { user: User }) {
-  return user.role === 'admin' ? <AdminApprovalPage /> : <RouteGraphPage />;
+  return user.role === 'admin' ? <AdminApprovalPage viewerUserId={user.id} /> : <CfoPositionsPage user={user} renderRouteGraph={(steps) => <ReadOnlyApprovalGraph steps={steps} viewerUserId={user.id} />} />;
 }

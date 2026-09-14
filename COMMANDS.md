@@ -2,6 +2,13 @@
 
 Команды выполняются из корня репозитория, если не указано иное.
 
+Перед миграцией маршрута ЦФО сформировать read-only отчёт:
+
+```powershell
+Get-Content backend/db/cfo_workflow_preflight.sql -Raw |
+  docker compose exec -T postgres psql -U budgetbasket -d budgetbasket
+```
+
 ## Развёртывание и запуск
 
 ```powershell
@@ -127,3 +134,28 @@ npm run dev
 - pgAdmin: http://localhost:5050
 - SeaweedFS S3 API: http://localhost:8333
 - PostgreSQL с хоста: `localhost:5433`
+
+## Production frontend
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build frontend-production
+curl -I http://localhost:5174/
+curl http://localhost:5174/api/health
+```
+
+## Воспроизводимый аудит производительности
+
+Команды ниже выполняются внутри backend-контейнера и используют только отдельные базы `budgetbasket_perf_*`:
+
+```powershell
+docker compose exec backend python -m scripts.performance_audit --label after --new-api --output /tmp/after.jsonl
+docker cp bb-backend:/tmp/after.jsonl docs/performance/after.jsonl
+docker compose exec backend python -m scripts.performance_plans
+docker compose exec backend python -m scripts.register_contract
+```
+
+PostgreSQL-интеграционные проверки требуют явного URL тестовой базы:
+
+```powershell
+docker compose exec -e PERFORMANCE_DATABASE_URL=postgresql://budgetbasket:budgetbasket@postgres:5432/budgetbasket_perf_100 backend python -m pytest tests/test_performance_postgres.py
+```

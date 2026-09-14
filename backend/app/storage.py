@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import BinaryIO
+from shutil import copyfileobj
 
 import boto3
 from fastapi import HTTPException
@@ -19,10 +20,14 @@ class LocalObjectStorage:
     def ensure_bucket(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
 
-    def put_object(self, key: str, content: bytes, content_type: str) -> None:
+    def put_object(self, key: str, content: bytes | BinaryIO, content_type: str) -> None:
         path = self.root / key
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content)
+        if isinstance(content, bytes):
+            path.write_bytes(content)
+        else:
+            with path.open("wb") as destination:
+                copyfileobj(content, destination, length=64 * 1024)
 
     def get_object(self, key: str) -> tuple[BinaryIO, int | None, str | None]:
         path = self.root / key
@@ -54,7 +59,7 @@ class S3ObjectStorage:
         except ClientError:
             self.client.create_bucket(Bucket=self.bucket)
 
-    def put_object(self, key: str, content: bytes, content_type: str) -> None:
+    def put_object(self, key: str, content: bytes | BinaryIO, content_type: str) -> None:
         self.client.put_object(Bucket=self.bucket, Key=key, Body=content, ContentType=content_type)
 
     def get_object(self, key: str):

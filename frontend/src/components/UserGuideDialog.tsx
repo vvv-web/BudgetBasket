@@ -1,228 +1,218 @@
 import CloseIcon from '@mui/icons-material/Close';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import type { Role } from '../types';
-import { roleLabels } from '../utils/labels';
-import Button from '@mui/material/Button';
+import SearchOutlinedIcon from '@mui/icons-material/SearchOutlined';
+import WarningAmberOutlinedIcon from '@mui/icons-material/WarningAmberOutlined';
 import Accordion from '@mui/material/Accordion';
 import AccordionDetails from '@mui/material/AccordionDetails';
 import AccordionSummary from '@mui/material/AccordionSummary';
+import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import IconButton from '@mui/material/IconButton';
-import List from '@mui/material/List';
-import ListItem from '@mui/material/ListItem';
-import ListItemText from '@mui/material/ListItemText';
+import InputAdornment from '@mui/material/InputAdornment';
 import Stack from '@mui/material/Stack';
+import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
+import { useEffect, useMemo, useState } from 'react';
+import guideContentJson from '../content/userGuideContent.json';
+import type { Role } from '../types';
 
-type GuideSection = {
+type GuideProcedure = { title: string; steps: string[]; result: string; next: string };
+type GuideSection = { title: string; paragraphs?: string[]; bullets?: string[]; procedures?: GuideProcedure[]; notes?: string[] };
+type JourneyStage = { title: string; detail: string };
+type RoleGuide = { label: string; intro: string; quickStart: string[]; sections: GuideSection[] };
+type GuideContent = {
   title: string;
-  items: string[];
+  version: string;
+  updated: string;
+  intro: string;
+  usage: string;
+  journey: JourneyStage[];
+  common: GuideSection[];
+  roles: Record<Role, RoleGuide>;
 };
+type IndexedSection = { key: string; section: GuideSection };
 
-const commonSections: GuideSection[] = [
-  {
-    title: '1. Навигация и доступ',
-    items: [
-      'Основные разделы расположены в левом меню. Нажмите название раздела, чтобы открыть страницу; на узком экране сначала откройте меню кнопкой с иконкой «гамбургер».',
-      'В нижней части меню находятся «Памятка», профиль и кнопка «Выйти». В профиле указываются ФИО, телефон, электронная почта и ссылка Max.',
-      'Состав меню и данные в списках зависят от роли и назначенных объединений. Если нужного объединения или действия нет, обратитесь к администратору.',
-    ],
-  },
-  {
-    title: '2. Статусы заявок',
-    items: [
-      '«Черновик» — заявка создана, но ещё не отправлена. Ответственный сотрудник может менять её строки, вложения и удалить заявку.',
-      '«На проверке» — сотрудник отправил заявку назначенному экономисту. Сотрудник может отозвать её в черновик или отменить; экономист принимает решения по строкам.',
-      '«Утверждена» — все строки приняты без изменения плановых сумм. «Утверждена с изменениями» — все строки приняты, но хотя бы у одной изменена фактическая сумма.',
-      '«Частично утверждена» — часть строк принята, а часть отклонена. «Отклонена» — ни одна строка не принята. «Отменена» — сотрудник прекратил работу с заявкой.',
-      'Признак «Бюджет зафиксирован» блокирует любые изменения заявки, строк и файлов до разморозки экономистом.',
-    ],
-  },
-  {
-    title: '3. Карточка заявки и экспорт',
-    items: [
-      'Нажмите строку в разделе «Заявки», чтобы открыть карточку. Вверху карточки показаны статус, суммы «План» и «Утверждено», количество строк и доступные действия.',
-      'В списке заявок используйте фильтр «Статус», чтобы сузить выборку. Для готовой заявки кнопка «Экспорт Excel» на карточке скачивает её данные.',
-      'Для общей выгрузки в разделе «Заявки» нажмите «Настроить экспорт»: выберите статусы и состав выгрузки — доходы, расходы или оба вида. При необходимости включите «Экспортировать только зафиксированные заявки» и отметьте чекбоксами нужные объединения. Дочерние объединения раскрываются стрелкой. Без выбора экспортируются все доступные объединения. Без вложений скачивается XLSX, с вложениями — ZIP с XLSX и файлами.',
-      'В экспорт попадают только доступные пользователю заявки. По умолчанию выбраны утверждённые статусы; отменённые заявки не экспортируются.',
-    ],
-  },
-];
+export const userGuideContent = guideContentJson as GuideContent;
 
-export const userGuides: Record<Role, GuideSection[]> = {
-  employee: [
-    {
-      title: '4. Создание заявки',
-      items: [
-        'Откройте «Заявки» и нажмите «Добавить заявку». В окне выберите «Объединение заявки» из доступных вам объединений и нажмите «Создать заявку». Результат — новая заявка со статусом «Черновик».',
-        'Откройте созданную заявку. В разделах «Резервирование бюджета» и «Доходы объединения» выберите статью или проект из справочника, укажите «Плановую сумму» и нажмите «Добавить строку». Добавляйте только необходимые строки.',
-        'Чтобы приложить подтверждение к новой строке, используйте «Прикрепить файл» рядом с добавлением строки. Для уже сохранённой строки откройте режим редактирования и воспользуйтесь иконкой прикрепления.',
-      ],
-    },
-    {
-      title: '5. Редактирование черновика',
-      items: [
-        'На карточке черновика нажмите «Редактировать» в блоке строк. Измените статью или проект, плановую сумму, добавьте либо отметьте файлы для удаления, затем нажмите «Сохранить».',
-        'Для удаления отдельной строки нажмите иконку корзины и подтвердите действие. При удалении строки удаляются и связи с её файлами.',
-        'Удалить всю заявку можно только в статусе «Черновик»: нажмите «Удалить заявку» в шапке карточки и подтвердите действие. Перед удалением проверьте состав строк.',
-      ],
-    },
-    {
-      title: '6. Отправка и доработка',
-      items: [
-        'После проверки строк нажмите «Отправить заявку». Для отправки требуется хотя бы одна строка и назначенный для объединения экономист. Результат — статус «На проверке».',
-        'Если требуется исправление, на карточке заявки «На проверке» нажмите «Отозвать в черновик». После доработки снова нажмите «Отправить заявку».',
-        'Если заявка больше не нужна, используйте кнопку «Отменить заявку». Это финальный статус; новую потребность оформляйте отдельной заявкой.',
-      ],
-    },
-    {
-      title: '7. Результат проверки',
-      items: [
-        'После решения экономиста откройте карточку: в строках будут показаны статусы, фактические суммы и комментарии. При необходимости используйте контакты экономиста, которые отображаются на карточке.',
-        'Завершённую заявку можно выгрузить кнопкой «Экспорт Excel». Вносить изменения в завершённую заявку сотрудник не может.',
-      ],
-    },
-  ],
-  economist: [
-    {
-      title: '4. Очередь на проверку',
-      items: [
-        'Откройте «Сводка» для контроля показателей или «Заявки» для работы со списком. Вам доступны только нечерновые заявки закреплённых объединений.',
-        'Выберите фильтр «На проверке» и откройте заявку. В шапке проверьте объединение, плановую сумму, количество строк и контакты ответственного сотрудника.',
-      ],
-    },
-    {
-      title: '5. Решение по строкам',
-      items: [
-        'В разделах «Строки ДДС» и «Строки инвест-проектов» для каждой строки выберите статус: «Утверждено», «Утверждено с изменениями» или «Отказано». Укажите фактическую сумму и комментарий, затем нажмите иконку «Сохранить» в строке.',
-        'Если фактическая сумма равна плановой, используйте «Утверждено». Если сумма отличается, выберите «Утверждено с изменениями» и введите фактическую сумму. Для отказа рекомендуется заполнить комментарий.',
-        'Кнопка «Зафиксировать все строки» утверждает все оставшиеся нерассмотренные строки по их плановым суммам и завершает проверку. Используйте её только после проверки состава заявки.',
-      ],
-    },
-    {
-      title: '6. Завершение и повторное рассмотрение',
-      items: [
-        'Когда решения приняты по всем строкам, нажмите «Завершить проверку». Итоговый статус система определит автоматически и сразу заморозит заявку.',
-        'После завершения всех заявок откройте «Согласование бюджета» и нажмите «Согласовать шаг», чтобы передать их дальше.',
-      ],
-    },
-    {
-      title: '7. Возврат и разморозка',
-      items: [
-        'Замороженную заявку нельзя изменить. Если она возвращена с вышестоящего шага, откройте листовой шаг, выберите заявку и оставьте комментарий.',
-        'Действие возврата на листовом шаге явно размораживает заявку и переводит её в черновик сотрудника. После повторной отправки проверьте строки заново.',
-      ],
-    },
-  ],
-  admin: [
-    {
-      title: '4. Пользователи и роли',
-      items: [
-        'Откройте «Пользователи» и нажмите «Добавить пользователя». Заполните логин, пароль и роль, при необходимости ФИО и контакты, затем нажмите «Создать профиль».',
-        'Чтобы изменить пользователя, нажмите иконку редактирования в его строке, исправьте поля и нажмите «Сохранить». Фильтры «Роль» и «Объединение» помогают найти запись.',
-        'Роль «Сотрудник» создаёт и дорабатывает заявки, «Экономист» проверяет закреплённые объединения, «Согласующий» работает с промежуточным шагом, «ЗГД» — с корневым, а «Администратор» настраивает систему.',
-      ],
-    },
-    {
-      title: '5. Оргструктура и назначения',
-      items: [
-        'Откройте «Оргструктура» и нажмите «Создать объединение», чтобы добавить корневое объединение. Для добавления дочернего объединения используйте иконку «Добавить объединение».',
-        'Годовой бюджет не задаётся вручную: он формируется из сумм одобренных строк закрытых заявок. На карточке объединения учитываются также его дочерние объединения.',
-        'В форме укажите название, статус и назначения. Для дочернего объединения обязательно назначьте ответственного сотрудника и экономиста: без этих назначений сотрудник не сможет корректно создать и отправить заявку.',
-        'Кнопка «Редактировать» на карточке объединения меняет название, активность и назначения. Неактивные записи сохраняются в истории, но не должны использоваться для новых операций.',
-      ],
-    },
-    {
-      title: '6. Маршрут согласования',
-      items: [
-        'Откройте «Маршрут согласования». Экран показывает визуальный граф: стрелки ведут от модуля и экономиста к проверяющим и ЗГД.',
-        'Первый шаг модуля создаётся автоматически после первой отправки заявки. Для него используются ответственный и экономист, назначенные в оргструктуре.',
-        'Добавляйте в маршрут только проверяющих и ЗГД, затем связывайте блоки стрелками через форму «Связи графа» и запускайте проверку валидности.',
-      ],
-    },
-    {
-      title: '7. НСИ: создание, редактирование и импорт',
-      items: [
-        'Откройте «НСИ», выберите справочник ДДС или инвест-проектов и нужное объединение. Здесь создаются статьи/проекты, доступные при заполнении заявок.',
-        'Для ручного изменения нажмите иконку редактирования в строке, измените название, объединение или признак активности и сохраните изменения. Удаление выполняется через иконку корзины с подтверждением.',
-        'Для массовой загрузки откройте управление справочником, нажмите «Скачать шаблон», заполните XLSX без изменения структуры и нажмите «Импорт». Сначала проверьте предварительно загруженные категории и строки, затем нажмите «Сохранить строки». Система покажет число созданных и обновлённых записей, а также ошибки.',
-        'После заполнения справочников настройте соответствие статей и проектов объединениям в разделе «НСИ». Неактивные записи не должны использоваться для новых строк заявок.',
-      ],
-    },
-    {
-      title: '8. Контроль и выгрузка',
-      items: [
-        'В «Сводке» выберите объединение для просмотра показателей. В «Заявках» используйте фильтр статуса, открывайте карточки для просмотра сумм и решений по строкам.',
-        'Для сводной выгрузки нажмите «Настроить экспорт», выберите статусы и состав: доходы, расходы или оба вида, затем отметьте чекбоксами объединения. При необходимости ограничьте выгрузку только зафиксированными заявками. При включении вложений система сформирует ZIP-архив; без них — XLSX.',
-        'Администратор не участвует в бизнес-процессе: не согласует шаги, не возвращает заявки и не фиксирует бюджет.',
-      ],
-    },
-  ],
-  approver: [
-    {
-      title: '4. Согласование бюджета',
-      items: [
-        'Откройте раздел «Согласование бюджета» и выберите назначенный шаг.',
-        'Проверьте заявки и сводные суммы. Когда все дочерние ветки готовы, нажмите «Согласовать шаг».',
-        'Для возврата выберите непосредственную дочернюю ветку и заявки, укажите обязательный комментарий ко всей заявке.',
-      ],
-    },
-  ],
-  zgd: [
-    {
-      title: '4. Финальное согласование',
-      items: [
-        'Откройте корневой шаг в разделе «Согласование бюджета» и проверьте консолидированную область.',
-        'Возврат выполняется через непосредственную дочернюю ветку с обязательным комментарием.',
-        'Финальное подтверждение закрывает весь граф и необратимо фиксирует заявки.',
-      ],
-    },
-  ],
-};
+function GuideList({ items }: { items: string[] }) {
+  return (
+    <Stack component="ul" spacing={0.9} sx={{ m: 0, pl: 2.5 }}>
+      {items.map((item) => (
+        <Typography key={item} component="li" variant="body2" sx={{ lineHeight: 1.6, overflowWrap: 'anywhere', pl: 0.25 }}>
+          {item}
+        </Typography>
+      ))}
+    </Stack>
+  );
+}
+
+function ProcessJourney({ stages }: { stages: JourneyStage[] }) {
+  return (
+    <Box>
+      <Typography variant="h6" color="primary.main" fontWeight={700} sx={{ mb: 1.25 }}>Как движется бюджет</Typography>
+      <Box sx={{ overflowX: 'auto', border: 1, borderColor: 'divider' }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(150px, 1fr))', minWidth: 750 }}>
+          {stages.map((stage, index) => (
+            <Box key={stage.title} sx={{ px: 1.25, py: 1, bgcolor: 'primary.main', color: 'primary.contrastText', borderRight: index < stages.length - 1 ? 1 : 0, borderColor: 'primary.light', fontSize: 13, fontWeight: 700, textAlign: 'center' }}>
+              {index + 1}. {stage.title}
+            </Box>
+          ))}
+          {stages.map((stage, index) => (
+            <Box key={stage.detail} sx={{ minHeight: 84, px: 1.25, py: 1.25, bgcolor: 'action.hover', borderRight: index < stages.length - 1 ? 1 : 0, borderColor: 'divider', fontSize: 13, lineHeight: 1.4, textAlign: 'center' }}>
+              {stage.detail}
+            </Box>
+          ))}
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
+function RoleWorkOrder({ steps }: { steps: string[] }) {
+  return (
+    <Box sx={{ border: 1, borderColor: 'divider' }}>
+      <Typography variant="subtitle1" fontWeight={700} sx={{ px: 1.5, py: 1.1, bgcolor: 'primary.main', color: 'primary.contrastText' }}>Порядок работы</Typography>
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(5, minmax(0, 1fr))' }, gap: 1 }}>
+        {steps.map((step, index) => (
+          <Stack key={step} direction="row" spacing={1} alignItems="flex-start" sx={{ minWidth: 0, p: 1.25 }}>
+            <Typography variant="body2" color="primary.main" fontWeight={700}>{index + 1}.</Typography>
+            <Typography variant="body2" fontWeight={600} sx={{ lineHeight: 1.45, overflowWrap: 'anywhere' }}>{step}</Typography>
+          </Stack>
+        ))}
+      </Box>
+    </Box>
+  );
+}
+
+function ProcedureCard({ procedure }: { procedure: GuideProcedure }) {
+  return (
+    <Box sx={{ overflow: 'hidden', border: 1, borderColor: 'divider', borderRadius: 1 }}>
+      <Box sx={{ px: { xs: 1.5, sm: 2 }, py: 1.25, bgcolor: 'action.hover', borderBottom: 1, borderColor: 'divider' }}>
+        <Typography variant="subtitle1" fontWeight={700}>{procedure.title}</Typography>
+      </Box>
+      <Stack spacing={1.25} sx={{ p: { xs: 1.5, sm: 2 } }}>
+        {procedure.steps.map((step, index) => (
+          <Stack key={step} direction="row" spacing={1.25} alignItems="flex-start">
+            <Box sx={{ display: 'grid', placeItems: 'center', width: 26, height: 26, flex: '0 0 26px', borderRadius: 1, bgcolor: 'action.selected', color: 'text.primary', fontSize: 12, fontWeight: 700 }}>{index + 1}</Box>
+            <Typography variant="body2" sx={{ pt: 0.2, lineHeight: 1.55, overflowWrap: 'anywhere' }}>{step}</Typography>
+          </Stack>
+        ))}
+      </Stack>
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, borderTop: 1, borderColor: 'divider' }}>
+        <Box sx={{ p: 1.5, bgcolor: 'background.default' }}>
+          <Typography variant="caption" color="text.secondary" fontWeight={700}>Результат</Typography>
+          <Typography variant="body2" sx={{ mt: 0.25, lineHeight: 1.5 }}>{procedure.result}</Typography>
+        </Box>
+        <Box sx={{ p: 1.5, bgcolor: 'background.default', borderLeft: { sm: 1 }, borderColor: 'divider' }}>
+          <Typography variant="caption" color="text.secondary" fontWeight={700}>Что дальше</Typography>
+          <Typography variant="body2" sx={{ mt: 0.25, lineHeight: 1.5 }}>{procedure.next}</Typography>
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
+function GuideSectionContent({ section }: { section: GuideSection }) {
+  return (
+    <Stack spacing={1.75}>
+      {section.paragraphs?.map((paragraph) => <Typography key={paragraph} variant="body2" sx={{ lineHeight: 1.7, overflowWrap: 'anywhere', textAlign: 'justify' }}>{paragraph}</Typography>)}
+      {!!section.bullets?.length && <GuideList items={section.bullets} />}
+      {section.procedures?.map((procedure) => <ProcedureCard key={procedure.title} procedure={procedure} />)}
+      {!!section.notes?.length && (
+        <Stack direction="row" spacing={1.25} alignItems="flex-start" sx={{ p: { xs: 1.5, sm: 2 }, border: 1, borderColor: 'warning.light', bgcolor: 'warning.light', borderRadius: 1 }}>
+          <WarningAmberOutlinedIcon color="warning" sx={{ mt: 0.15, flexShrink: 0 }} />
+          <Box>
+            <Typography variant="subtitle2" fontWeight={800} sx={{ mb: 0.75 }}>Важно</Typography>
+            <GuideList items={section.notes} />
+          </Box>
+        </Stack>
+      )}
+    </Stack>
+  );
+}
+
+function SectionAccordion({ item, expanded, onToggle }: { item: IndexedSection; expanded: boolean; onToggle: () => void }) {
+  return (
+    <Accordion id={`guide-${item.key}`} expanded={expanded} onChange={onToggle} disableGutters elevation={0} sx={{ scrollMarginTop: 12, border: 1, borderColor: expanded ? 'primary.light' : 'divider', borderRadius: '12px !important', overflow: 'hidden', '&:before': { display: 'none' } }}>
+      <AccordionSummary expandIcon={<ExpandMoreIcon />} aria-controls={`${item.key}-content`} id={`${item.key}-header`} sx={{ px: { xs: 1.5, sm: 2 }, bgcolor: expanded ? 'action.hover' : 'background.paper' }}>
+        <Typography variant="h6" sx={{ fontSize: { xs: 15, sm: 17 }, fontWeight: 720, overflowWrap: 'anywhere', pr: 1 }}>{item.section.title}</Typography>
+      </AccordionSummary>
+      <AccordionDetails id={`${item.key}-content`} sx={{ px: { xs: 1.5, sm: 2 }, pt: 1.5, pb: 2 }}>
+        <GuideSectionContent section={item.section} />
+      </AccordionDetails>
+    </Accordion>
+  );
+}
 
 export function UserGuideDialog({ role, open, onClose }: { role: Role; open: boolean; onClose: () => void }) {
   const theme = useTheme();
   const fullScreen = useMediaQuery(theme.breakpoints.down('sm'));
+  const roleGuide = userGuideContent.roles[role];
+  const commonSections = useMemo(() => userGuideContent.common.map((section, index) => ({ key: `common-${index}`, section })), []);
+  const roleSections = useMemo(() => roleGuide.sections.map((section, index) => ({ key: `role-${index}`, section })), [roleGuide]);
+  const [query, setQuery] = useState('');
+  const [expandedSection, setExpandedSection] = useState('common-0');
+  const normalizedQuery = query.trim().toLocaleLowerCase('ru');
+  const matches = (item: IndexedSection) => JSON.stringify(item.section).toLocaleLowerCase('ru').includes(normalizedQuery);
+  const visibleCommon = normalizedQuery ? commonSections.filter(matches) : commonSections;
+  const visibleRole = normalizedQuery ? roleSections.filter(matches) : roleSections;
+
+  useEffect(() => {
+    if (open) {
+      setQuery('');
+      setExpandedSection('common-0');
+    }
+  }, [open, role]);
+
+  const renderGroup = (items: IndexedSection[]) => items.length > 0 && (
+    <Stack spacing={1.25}>
+      {items.map((item) => (
+        <SectionAccordion key={item.key} item={item} expanded={Boolean(normalizedQuery) || expandedSection === item.key} onToggle={() => setExpandedSection(expandedSection === item.key ? '' : item.key)} />
+      ))}
+    </Stack>
+  );
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="md" fullScreen={fullScreen} aria-labelledby="user-guide-title">
-      <DialogTitle id="user-guide-title" sx={{ pr: 6 }}>
-        Руководство пользователя BudgetBasket: {roleLabels[role]}
-        <IconButton aria-label="Закрыть руководство" onClick={onClose} sx={{ position: 'absolute', right: 12, top: 12 }}>
-          <CloseIcon />
-        </IconButton>
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="lg" fullScreen={fullScreen} aria-labelledby="user-guide-title" PaperProps={{ sx: { position: 'relative', maxHeight: fullScreen ? '100%' : 'calc(100% - 48px)' } }}>
+      <DialogTitle id="user-guide-title" sx={{ pr: 7, pb: 1.5 }}>
+        <Typography component="span" variant="h6" fontWeight={700}>{userGuideContent.title}</Typography>
+        <IconButton aria-label="Закрыть руководство" onClick={onClose} sx={{ position: 'absolute', right: 12, top: 12, color: 'text.secondary' }}><CloseIcon /></IconButton>
       </DialogTitle>
-      <DialogContent dividers>
-        <Stack spacing={2.5}>
-          <Typography color="text.secondary">
-            Для каждой операции указаны страница, кнопка и ожидаемый результат. Доступные данные определяются вашей ролью и назначенными объединениями.
-          </Typography>
-          {[...commonSections, ...userGuides[role]].map((section, index) => (
-            <Accordion key={section.title} defaultExpanded={index === 0} disableGutters elevation={0} sx={{ border: 1, borderColor: 'divider', borderRadius: '8px !important', '&:before': { display: 'none' } }}>
-              <AccordionSummary expandIcon={<ExpandMoreIcon />} aria-controls={`guide-section-${index}-content`} id={`guide-section-${index}-header`}>
-                <Typography variant="h6">{section.title}</Typography>
-              </AccordionSummary>
-              <AccordionDetails id={`guide-section-${index}-content`} sx={{ pt: 0 }}>
-              <List dense disablePadding>
-                {section.items.map((item) => (
-                  <ListItem key={item} sx={{ display: 'list-item', ml: 2.5, pl: 0 }}>
-                    <ListItemText primary={item} />
-                  </ListItem>
-                ))}
-              </List>
-              </AccordionDetails>
-            </Accordion>
-          ))}
+      <DialogContent dividers sx={{ position: 'relative', overflowY: 'auto', overflowX: 'hidden', px: { xs: 1.5, sm: 5 }, py: { xs: 2.5, sm: 4 } }}>
+        <Stack spacing={2.75} sx={{ width: '100%', maxWidth: 1120, mx: 'auto' }}>
+          <Box sx={{ px: { xs: 0, sm: 1 } }}>
+            <Typography variant="body2" sx={{ lineHeight: 1.6, textAlign: 'justify' }}>{userGuideContent.intro}</Typography>
+            <Typography variant="body2" sx={{ mt: 2, lineHeight: 1.6, textAlign: 'justify' }}><Box component="strong">Как пользоваться. </Box>{userGuideContent.usage}</Typography>
+          </Box>
+          <ProcessJourney stages={userGuideContent.journey} />
+          <Stack spacing={2} sx={{ minWidth: 0 }}>
+              <Typography variant="h5" color="primary.main" fontWeight={700}>Общая часть</Typography>
+              <TextField value={query} onChange={(event) => setQuery(event.target.value)} label="Поиск по руководству" placeholder="Например: файл, возврат, статус" size="small" fullWidth InputProps={{ startAdornment: <InputAdornment position="start"><SearchOutlinedIcon fontSize="small" /></InputAdornment> }} />
+              {normalizedQuery && <Typography variant="caption" color="text.secondary">Найдено разделов: {visibleCommon.length + visibleRole.length}. Совпавшие разделы раскрыты полностью.</Typography>}
+              {renderGroup(visibleCommon)}
+              <Box sx={{ pt: 1, borderTop: 1, borderColor: 'divider' }}>
+                <Typography variant="h5" color="primary.main" fontWeight={700}>Работа в роли: {roleGuide.label}</Typography>
+                <Typography variant="body2" sx={{ mt: 1, lineHeight: 1.6 }}>{roleGuide.intro}</Typography>
+              </Box>
+              <RoleWorkOrder steps={roleGuide.quickStart} />
+              {renderGroup(visibleRole)}
+              {visibleCommon.length + visibleRole.length === 0 && (
+                <Box sx={{ py: 5, px: 2, textAlign: 'center', border: 1, borderStyle: 'dashed', borderColor: 'divider', borderRadius: 2 }}>
+                  <SearchOutlinedIcon color="disabled" sx={{ fontSize: 40 }} />
+                  <Typography variant="subtitle1" fontWeight={750} sx={{ mt: 1 }}>Ничего не найдено</Typography>
+                  <Typography variant="body2" color="text.secondary">Попробуйте другое слово или очистите строку поиска.</Typography>
+                </Box>
+              )}
+          </Stack>
         </Stack>
       </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>Закрыть</Button>
-      </DialogActions>
+      <DialogActions sx={{ px: { xs: 2, sm: 3 }, py: 1.5 }}><Button onClick={onClose}>Закрыть</Button></DialogActions>
     </Dialog>
   );
 }

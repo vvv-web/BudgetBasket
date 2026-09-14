@@ -1,0 +1,29 @@
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1000;
+    gzip_types application/javascript text/css application/json image/svg+xml;
+    client_max_body_size 0;
+
+    location /api/ {
+        proxy_pass http://backend:${APP_PORT}/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 75s;
+        proxy_buffering off;
+    }
+    location /assets/ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache";
+    }
+}

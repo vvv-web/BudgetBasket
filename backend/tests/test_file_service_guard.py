@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from io import BytesIO
 from types import SimpleNamespace
 
@@ -9,7 +10,7 @@ from fastapi import HTTPException
 from starlette.datastructures import Headers, UploadFile
 
 from app.config import Settings
-from app.services.file_guard_client import FileGuardUnavailableError
+from app.services.file_guard_client import FileGuardRejectedError, FileGuardUnavailableError
 from app.services.file_service import FileService
 
 
@@ -35,31 +36,20 @@ class FakeStorage:
 
 
 class AllowingGuard:
-    async def validate(self, upload):
+    async def process(self, upload):
         return SimpleNamespace(
-            valid=True,
-            detected_mime_type="application/pdf",
-            size_bytes=7,
-            reason_code=None,
-            message=None,
-            warnings=[],
+            content=b"safe-content", output_name="offer.pdf", output_mime_type="application/pdf",
+            output_sha256=hashlib.sha256(b"safe-content").hexdigest(), sanitized=False, removed_components=[], warnings=[],
         )
 
 
 class RejectingGuard:
-    async def validate(self, upload):
-        return SimpleNamespace(
-            valid=False,
-            detected_mime_type="application/octet-stream",
-            size_bytes=7,
-            reason_code="MIME_MISMATCH",
-            message="Тип содержимого файла не соответствует его расширению.",
-            warnings=[],
-        )
+    async def process(self, upload):
+        raise FileGuardRejectedError("Тип содержимого файла не соответствует его расширению.")
 
 
 class UnavailableGuard:
-    async def validate(self, upload):
+    async def process(self, upload):
         raise FileGuardUnavailableError
 
 
@@ -85,7 +75,7 @@ def test_successful_validation_precedes_normal_storage_and_database_write() -> N
 
     assert created["original_name"] == "offer.pdf"
     assert len(storage.puts) == 1
-    assert storage.puts[0][1:] == (b"content", "application/pdf")
+    assert storage.puts[0][1:] == (b"safe-content", "application/pdf")
     assert len(repo.rows["storage_objects"]) == 1
     assert len(repo.rows["files"]) == 1
 

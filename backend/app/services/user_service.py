@@ -1,5 +1,6 @@
 from fastapi import HTTPException
 
+from app.models import validate_email, validate_phone, validate_required_text
 from app.repositories.base import Repository
 from app.security import hash_password
 from app.services.common import public_user, require_role
@@ -38,14 +39,22 @@ class UserService:
 
     def create_user(self, current_user: dict, payload: dict) -> dict:
         require_role(current_user, "admin")
-        if any(item["login"] == payload["login"] for item in self.repo.load_all("users")):
-            raise HTTPException(status_code=400, detail="Логин уже используется")
         profile_data = {key: (payload.get(key) or "").strip() for key in PROFILE_FIELDS}
+        try:
+            profile_data["name"] = validate_required_text(profile_data["name"])
+            profile_data["last_name"] = validate_required_text(profile_data["last_name"])
+            profile_data["email"] = validate_email(profile_data["email"])
+            profile_data["phone"] = validate_phone(profile_data["phone"])
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         user_payload = {key: payload[key] for key in ("login", "role")}
         user_payload["password"] = hash_password(payload["password"])
-        user = self.repo.create("users", user_payload)
-        profile = {"user_id": user["id"], **EMPTY_PROFILE, **profile_data}
-        self.repo.insert("profiles", profile)
+        with self.repo.transaction() as repo:
+            if any(item["login"] == payload["login"] for item in repo.load_all("users")):
+                raise HTTPException(status_code=400, detail="Логин уже используется")
+            user = repo.create("users", user_payload)
+            profile = {"user_id": user["id"], **EMPTY_PROFILE, **profile_data}
+            repo.insert("profiles", profile)
         return {**public_user(user), "profile": profile}
 
     def update_user(self, current_user: dict, user_id: str, patch: dict) -> dict:
@@ -82,17 +91,28 @@ class UserService:
         user = self.repo.get_by_id("users", user_id)
         if not user:
             raise HTTPException(status_code=404, detail="Запись не найдена")
+        assigned_units = {
+            item["unit_id"]
+            for item in self.repo.load_all("units_responsibles")
+            if item.get("user_id") == user_id and item.get("is_active")
+        }
+        position_ids = {
+            item["id"] for item in self.repo.load_all("cfo_positions")
+            if item.get("cfo_unit_id") in assigned_units
+        }
+        dependencies: list[str] = []
         if any(step.get("user_id") == user_id for step in self.repo.load_all("steps")):
-            raise HTTPException(
-                status_code=400,
-                detail="Сначала переназначьте шаги согласования пользователя",
-            )
-
-        for item in self.repo.load_all("requests"):
-            if item.get("economist_id") == user_id:
-                if item.get("frozen"):
-                    raise HTTPException(status_code=400, detail="Бюджет зафиксирован")
-                self.repo.update("requests", item["id"], {"economist_id": None})
+            dependencies.append("назначен в шагах согласования")
+        if assigned_units:
+            dependencies.append("назначен ответственным за подразделение")
+        if any(
+            item.get("cfo_position_id") in position_ids
+            and (item.get("frozen") or item.get("fixed"))
+            for item in self.repo.load_all("req_items")
+        ):
+            dependencies.append("имеет замороженные или зафиксированные позиции ЦФО")
+        if dependencies:
+            raise HTTPException(status_code=409, detail=f"Нельзя удалить: пользователь {', '.join(dependencies)}")
         self.repo.delete_where("profiles", {"user_id": user_id})
         self.repo.delete_where("units_responsibles", {"user_id": user_id})
         self.repo.delete("users", user_id)

@@ -2,27 +2,17 @@ import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import FileDownloadIcon from '@mui/icons-material/FileDownload';
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import HistoryOutlinedIcon from '@mui/icons-material/HistoryOutlined';
 import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
 import UndoIcon from '@mui/icons-material/Undo';
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
-import Checkbox from '@mui/material/Checkbox';
-import Collapse from '@mui/material/Collapse';
-import Dialog from '@mui/material/Dialog';
-import DialogActions from '@mui/material/DialogActions';
-import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
-import FormControlLabel from '@mui/material/FormControlLabel';
-import FormGroup from '@mui/material/FormGroup';
 import IconButton from '@mui/material/IconButton';
 import MenuItem from '@mui/material/MenuItem';
 import Paper from '@mui/material/Paper';
 import Stack from '@mui/material/Stack';
-import Switch from '@mui/material/Switch';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
@@ -31,28 +21,34 @@ import TableRow from '@mui/material/TableRow';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
-import useMediaQuery from '@mui/material/useMediaQuery';
-import { useTheme } from '@mui/material/styles';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Fragment, lazy, Suspense, useMemo, useState, useEffect, type ReactNode } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { ExportSettingsDialog } from '../components/ExportSettingsDialog';
+import { PageSkeleton } from '../components/PageSkeleton';
+import { RequestHistoryDrawer, type RequestHistoryTarget } from '../components/request-history/RequestHistoryDrawer';
 import { useAppToast } from '../components/Layout';
 import { TableColumnHeader, TableColumnResizeHandle, TableColumnTools } from '../components/TableColumnControls';
 import { RequestStatusBadge, StepStatusBadge } from '../components/StatusBadge';
-import type { BudgetItem, BudgetRequest, CatalogItem, RequestStatus, Unit, User } from '../types';
-import { EXPORTABLE_REQUEST_STATUSES } from '../types';
+import type { BudgetItem, BudgetRequest, CatalogItem, Unit, User } from '../types';
+import { CLOSED_EXPORT_STATUSES, defaultExportSettings, exportSettingsFromRequestPage, type ExportSettingsState } from '../utils/exportSettings';
 import { downloadBlob } from '../utils/download';
 import { money, requestStatusLabels } from '../utils/labels';
 import { filterFieldSx } from '../utils/responsive';
 import { useTableColumnControls, useTableColumnWidths, type TableColumnDefinition } from '../utils/tableColumns';
+import { getApiErrorDetail, getApiErrorMessage, getDownloadApiErrorMessage } from '../utils/apiErrors';
 
-function getErrorMessage(error: unknown, fallback: string) {
-  const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-  if (detail) return detail;
-  if (error instanceof Error && error.message === 'Network Error') return 'Не удалось подключиться к серверу';
-  return detail || (error instanceof Error ? error.message : fallback);
+const ApprovalRegister = lazy(() => import('../components/ApprovalRegister').then((module) => ({
+  default: module.ApprovalRegister,
+})));
+
+function existingRequestId(error: unknown): string | null {
+  const detail = getApiErrorDetail(error);
+  if (!detail || typeof detail !== 'object' || !('request_id' in detail)) return null;
+  const requestId = (detail as { request_id?: unknown }).request_id;
+  return typeof requestId === 'string' && requestId ? requestId : null;
 }
 
 type RequestTableColumn = 'unit' | 'status' | 'my_step' | 'planned' | 'approved' | 'items_count' | 'actions';
@@ -129,13 +125,23 @@ const REQUEST_TABLE_COLUMN_MIN_WIDTHS: Record<RequestTableColumn, number> = {
   actions: 100,
 };
 
-export default function RequestsPage({ user }: { user: User }) {
+function RequestsListPage({ user }: { user: User }) {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const toast = useAppToast();
-  const theme = useTheme();
-  const fullScreenDialog = useMediaQuery(theme.breakpoints.down('sm'));
-  const [filters, setFilters] = useState({ status: '', frozen: '' });
+  const [filters, setFilters] = useState({
+    status: searchParams.get('status') || '',
+    frozen: searchParams.get('frozen') || '',
+    flow: '' as '' | 'expense' | 'income',
+  });
+  useEffect(() => {
+    setFilters({
+      status: searchParams.get('status') || '',
+      frozen: searchParams.get('frozen') || '',
+      flow: (searchParams.get('flow') as '' | 'expense' | 'income') || '',
+    });
+  }, [searchParams]);
   const [expandedZgdDepartments, setExpandedZgdDepartments] = useState<string[]>([]);
   const [expandedZgdCfos, setExpandedZgdCfos] = useState<string[]>([]);
   const [expandedZgdArticles, setExpandedZgdArticles] = useState<string[]>([]);
@@ -144,19 +150,13 @@ export default function RequestsPage({ user }: { user: User }) {
   const [createError, setCreateError] = useState('');
   const [exportError, setExportError] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
-  const [expandedExportDepartments, setExpandedExportDepartments] = useState<string[]>([]);
-  const [exportSettings, setExportSettings] = useState({
-    statuses: [...EXPORTABLE_REQUEST_STATUSES],
-    fixed_only: false,
-    export_kind: 'all' as 'all' | 'expense' | 'income',
-    department_ids: [] as string[],
-    module_ids: [] as string[],
-    include_files: user.role === 'zgd',
-  });
+  const [exporting, setExporting] = useState(false);
+  const [exportSettings, setExportSettings] = useState<ExportSettingsState>(() => defaultExportSettings(user));
   const [deleteTarget, setDeleteTarget] = useState<BudgetRequest | null>(null);
+  const [historyTarget, setHistoryTarget] = useState<RequestHistoryTarget | null>(null);
   const deleteTargetId = deleteTarget?.id || '';
 
-  const { data: units = [] } = useQuery({ queryKey: ['units'], queryFn: async () => (await api.get<Unit[]>('/units')).data });
+  const { data: units = [], isLoading: unitsLoading } = useQuery({ queryKey: ['units'], queryFn: async () => (await api.get<Unit[]>('/units')).data });
   const { data: deleteTargetRequest } = useQuery({
     queryKey: ['request-delete-preview', deleteTargetId],
     queryFn: async () => (await api.get<BudgetRequest>(`/requests/${deleteTargetId}`)).data,
@@ -192,7 +192,7 @@ export default function RequestsPage({ user }: { user: User }) {
       ).data,
     enabled: !!deleteTargetRequest?.unit_id,
   });
-  const { data = [] } = useQuery({
+  const { data = [], isLoading: requestsLoading } = useQuery({
     queryKey: ['requests', filters.status],
     queryFn: async () =>
       (
@@ -201,7 +201,7 @@ export default function RequestsPage({ user }: { user: User }) {
         })
       ).data,
   });
-  const { data: zgdDetailRows = [] } = useQuery({
+  const { data: zgdDetailRows = [], isLoading: zgdDetailsLoading } = useQuery({
     queryKey: ['zgd-request-groups'],
     queryFn: async () => {
       const [expenses, income] = await Promise.all([
@@ -214,12 +214,16 @@ export default function RequestsPage({ user }: { user: User }) {
   });
   const filteredRequests = useMemo(
     () => data.filter((request) => {
+      const planned = request.summary?.planned_sum ?? request.sum_plan ?? request.sum ?? 0;
+      const incomePlanned = request.summary?.income_planned_sum ?? 0;
+      if (filters.flow === 'income' && incomePlanned <= 0) return false;
+      if (filters.flow === 'expense' && planned - incomePlanned <= 0) return false;
       if (!filters.frozen) return true;
       if (filters.frozen === 'fixed') return request.fixed;
       if (filters.frozen === 'frozen') return request.frozen && !request.fixed;
       return !request.frozen;
     }),
-    [data, filters.frozen],
+    [data, filters.flow, filters.frozen],
   );
   const zgdGroups = useMemo<ZgdDepartmentGroup[]>(() => {
     if (user.role !== 'zgd') return [];
@@ -303,15 +307,10 @@ export default function RequestsPage({ user }: { user: User }) {
       queryClient.invalidateQueries({ queryKey: ['my-approval-steps'] });
       queryClient.invalidateQueries({ queryKey: ['step-requests'] });
     },
-    onError: (error) => toast(getErrorMessage(error, 'Не удалось передать пакет'), 'error'),
+    onError: (error) => toast(getApiErrorMessage(error, 'Не удалось передать пакет'), 'error'),
   });
 
   const allModules = units.filter((unit) => unit.type === 'department' || unit.type === 'module');
-  const departments = units.filter((unit) => !unit.parent_id);
-  const modulesByDepartment = useMemo(
-    () => new Map(departments.map((department) => [department.id, units.filter((unit) => unit.parent_id === department.id)])),
-    [departments, units],
-  );
   const unitById = useMemo(() => new Map(units.map((unit) => [unit.id, unit])), [units]);
   const forwardPackages = useMemo(() => {
     if (user.role !== 'approver') return [];
@@ -392,7 +391,15 @@ export default function RequestsPage({ user }: { user: User }) {
       navigate(`/requests/${response.data.id}`);
     },
     onError: (error) => {
-      setCreateError(getErrorMessage(error, 'Заявку не удалось создать'));
+      const requestId = existingRequestId(error);
+      if (requestId) {
+        setCreateError('');
+        queryClient.invalidateQueries({ queryKey: ['requests'] });
+        toast('Открыта существующая заявка текущего года', 'info');
+        navigate(`/requests/${requestId}`);
+        return;
+      }
+      setCreateError(getApiErrorMessage(error, 'Заявку не удалось создать'));
       toast('Не удалось создать заявку', 'error');
     },
   });
@@ -405,73 +412,64 @@ export default function RequestsPage({ user }: { user: User }) {
       setDeleteTarget(null);
     },
     onError: (error) => {
-      toast(getErrorMessage(error, 'Не удалось удалить заявку'), 'error');
+      toast(getApiErrorMessage(error, 'Не удалось удалить заявку'), 'error');
     },
   });
 
+  const restoreRequest = useMutation({
+    mutationFn: (requestId: string) => api.post(`/requests/${requestId}/restore`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['requests'] });
+      toast('Заявка восстановлена в черновик', 'success');
+    },
+    onError: (error) => {
+      toast(getApiErrorMessage(error, 'Не удалось восстановить заявку'), 'error');
+    },
+  });
+
+  const requestAmounts = (request: BudgetRequest) => {
+    const planned = request.summary?.planned_sum ?? request.sum_plan ?? request.sum ?? 0;
+    const approved = request.summary?.approved_sum ?? (request.status === 'cancelled' ? 0 : request.sum);
+    const incomePlanned = request.summary?.income_planned_sum ?? 0;
+    const incomeApproved = request.summary?.income_approved_sum ?? 0;
+    if (filters.flow === 'income') return { planned: incomePlanned, approved: incomeApproved };
+    if (filters.flow === 'expense') return { planned: planned - incomePlanned, approved: approved - incomeApproved };
+    return { planned, approved };
+  };
+
   const exportClosed = async () => {
     setExportError('');
+    setExporting(true);
     try {
       const response = await api.get('/requests/export/closed', {
         params: {
           department_ids: exportSettings.department_ids.join(',') || undefined,
           module_ids: exportSettings.module_ids.join(',') || undefined,
+          // The export is always limited to rows currently visible in the
+          // requests table, so its contents cannot silently ignore filters.
+          request_ids: visibleRequests.map((request) => request.id).join(','),
           statuses: exportSettings.statuses.join(','),
           fixed_only: exportSettings.fixed_only,
-          export_kind: exportSettings.export_kind,
+          export_kind: filters.flow || exportSettings.export_kind,
           include_files: exportSettings.include_files,
         },
         responseType: 'blob',
       });
+      const exportKind = filters.flow || exportSettings.export_kind;
       const baseFilename = user.role === 'zgd'
         ? 'Заявки_ЗГД'
-        : exportSettings.export_kind === 'income'
+        : exportKind === 'income'
         ? 'Доходы_бюджета'
-        : exportSettings.export_kind === 'expense'
+        : exportKind === 'expense'
           ? 'Расходы_бюджета'
           : exportSettings.fixed_only ? 'Зафиксированные_заявки' : 'Утверждение_бюджета';
       downloadBlob(response.data, `${baseFilename}.${exportSettings.include_files ? 'zip' : 'xlsx'}`);
       setExportOpen(false);
-    } catch {
-      setExportError('Нет заявок для выбранных настроек экспорта или недостаточно прав.');
+    } catch (error) {
+      setExportError(await getDownloadApiErrorMessage(error, 'Нет заявок для выбранных настроек экспорта или недостаточно прав.'));
+    } finally {
+      setExporting(false);
     }
-  };
-
-  const exportStatusOptions: RequestStatus[] = [...EXPORTABLE_REQUEST_STATUSES, 'rejected'];
-
-  const toggleExportStatus = (status: RequestStatus) => {
-    setExportSettings((current) => ({
-      ...current,
-      statuses: current.statuses.includes(status)
-        ? current.statuses.filter((item) => item !== status)
-        : [...current.statuses, status],
-    }));
-  };
-
-  const toggleExportDepartment = (departmentId: string) => {
-    setExportSettings((current) => ({
-      ...current,
-      department_ids: current.department_ids.includes(departmentId)
-        ? current.department_ids.filter((id) => id !== departmentId)
-        : [...current.department_ids, departmentId],
-    }));
-  };
-
-  const toggleExportModule = (moduleId: string) => {
-    setExportSettings((current) => ({
-      ...current,
-      module_ids: current.module_ids.includes(moduleId)
-        ? current.module_ids.filter((id) => id !== moduleId)
-        : [...current.module_ids, moduleId],
-    }));
-  };
-
-  const toggleExportDepartmentModules = (departmentId: string) => {
-    setExpandedExportDepartments((current) => (
-      current.includes(departmentId)
-        ? current.filter((id) => id !== departmentId)
-        : [...current, departmentId]
-    ));
   };
 
   const deletePreviewRows = useMemo<DeletePreviewRow[]>(() => {
@@ -490,16 +488,16 @@ export default function RequestsPage({ user }: { user: User }) {
 
   const requestTableColumns = useMemo<TableColumnDefinition<BudgetRequest, RequestTableColumn>[]>(() => {
     const columns: TableColumnDefinition<BudgetRequest, RequestTableColumn>[] = [
-    ...(user.role === 'employee' && filteredRequests.some((item) => item.status === 'draft') ? [{ id: 'actions' as const, label: 'Действие', sortable: false, filterable: false, hideable: false, getValue: () => '' }] : []),
+    ...(user.role === 'employee' ? [{ id: 'actions' as const, label: 'Действие', sortable: false, filterable: false, hideable: false, getValue: () => '' }] : []),
     { id: 'unit', label: 'Объединение заявки', getValue: (item) => formatUnitName(item.unit_id) },
     { id: 'status', label: 'Статус', getValue: (item) => requestStatusLabels[item.status] || item.status },
     ...(user.role === 'approver' || user.role === 'zgd' ? [{ id: 'my_step' as const, label: 'Мой этап', getValue: (item: BudgetRequest) => item.my_step_statuses?.map((step) => step.reviewed ? 'Согласовано' : step.status).join(', ') || '—' }] : []),
-    { id: 'planned', label: 'План', getValue: (item) => money(item.summary?.planned_sum), getSortValue: (item) => item.summary?.planned_sum ?? 0 },
-    { id: 'approved', label: 'Утверждено', getValue: (item) => money(item.summary?.approved_sum ?? (item.status === 'cancelled' ? 0 : item.sum)), getSortValue: (item) => item.summary?.approved_sum ?? (item.status === 'cancelled' ? 0 : item.sum) },
+    { id: 'planned', label: 'План', getValue: (item) => money(requestAmounts(item).planned), getSortValue: (item) => requestAmounts(item).planned },
+    { id: 'approved', label: 'Утверждено', getValue: (item) => money(requestAmounts(item).approved), getSortValue: (item) => requestAmounts(item).approved },
     { id: 'items_count', label: 'Строк', getValue: (item) => String(item.summary?.items_count || 0), getSortValue: (item) => item.summary?.items_count || 0 },
     ];
     return columns.sort((left, right) => requestColumnOrder.indexOf(left.id) - requestColumnOrder.indexOf(right.id));
-  }, [filteredRequests, formatUnitName, requestColumnOrder, user.role]);
+  }, [filters.flow, formatUnitName, requestColumnOrder, user.role]);
   const {
     clearColumnFilter: clearRequestColumnFilter,
     clearSort: clearRequestSort,
@@ -545,15 +543,15 @@ export default function RequestsPage({ user }: { user: User }) {
         if (columnId === 'unit') return formatUnitName(item.unit_id);
         if (columnId === 'status') return requestStatusLabels[item.status] || item.status;
         if (columnId === 'my_step') return item.my_step_statuses?.map((step) => step.reviewed ? 'Согласовано' : step.status).join(', ') || '—';
-        if (columnId === 'planned') return money(item.summary?.planned_sum);
-        if (columnId === 'approved') return money(item.summary?.approved_sum ?? item.sum);
+        if (columnId === 'planned') return money(requestAmounts(item).planned);
+        if (columnId === 'approved') return money(requestAmounts(item).approved);
         if (columnId === 'items_count') return item.summary?.items_count || 0;
         return 'Удалить';
       });
       values[columnId] = [requestColumnLabels[columnId], ...cellValues];
     });
     return values;
-  }, [tableRequests, units]);
+  }, [filters.flow, tableRequests, units]);
   const { columnWidths: requestColumnWidths, resetColumnWidths: resetRequestColumnWidths, resizeColumn: resizeRequestColumn, autoFitColumn: autoFitRequestColumn } = useTableColumnWidths(
     REQUEST_TABLE_COLUMN_WIDTHS,
     REQUEST_TABLE_COLUMN_MIN_WIDTHS,
@@ -573,15 +571,66 @@ export default function RequestsPage({ user }: { user: User }) {
     setDraggedRequestColumn(null);
   };
   const renderRequestCell = (item: BudgetRequest, columnId: RequestTableColumn) => {
-    const canDelete = item.status === 'draft' && user.role === 'employee';
+    const canDelete = item.status === 'draft' && user.role === 'employee' && item.available_actions?.includes('delete');
+    const canRestore = item.status === 'cancelled'
+      && user.role === 'employee'
+      && item.available_actions?.includes('restore');
     if (columnId === 'actions') {
-      return <TableCell key={columnId}><Stack direction="row" spacing={0.5}>{canDelete && <Tooltip title="Удалить"><IconButton size="small" color="error" onClick={(event) => { event.stopPropagation(); setDeleteTarget(item); }} aria-label="Удалить"><DeleteOutlineIcon fontSize="small" /></IconButton></Tooltip>}</Stack></TableCell>;
+      return (
+        <TableCell key={columnId}>
+          <Stack direction="row" spacing={0.5}>
+            <Tooltip title="История изменений">
+              <IconButton
+                size="small"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setHistoryTarget({
+                    requestId: item.id,
+                    title: 'История изменений',
+                    subtitle: `Заявка №${item.id.slice(0, 8)}`,
+                  });
+                }}
+                aria-label="История изменений"
+              >
+                <HistoryOutlinedIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+            {canRestore ? (
+              <Tooltip title="Восстановить заявку">
+                <span>
+                  <IconButton
+                    size="small"
+                    color="warning"
+                    disabled={restoreRequest.isPending}
+                    onClick={(event) => { event.stopPropagation(); restoreRequest.mutate(item.id); }}
+                    aria-label="Восстановить заявку"
+                  >
+                    <UndoIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            ) : null}
+            {canDelete ? (
+              <Tooltip title="Удалить черновик">
+                <IconButton
+                  size="small"
+                  color="error"
+                  onClick={(event) => { event.stopPropagation(); setDeleteTarget(item); }}
+                  aria-label="Удалить черновик"
+                >
+                  <DeleteOutlineIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            ) : null}
+          </Stack>
+        </TableCell>
+      );
     }
     if (columnId === 'unit') return <TableCell key={columnId}>{formatUnitName(item.unit_id)}</TableCell>;
-    if (columnId === 'status') return <TableCell key={columnId}><Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap><RequestStatusBadge status={item.status} />{item.frozen && <Tooltip title={item.fixed ? 'Окончательно зафиксирована ЗГД' : 'Заморожена экономистом'}><LockOutlinedIcon color={item.fixed ? 'success' : 'warning'} fontSize="small" /></Tooltip>}</Stack></TableCell>;
+    if (columnId === 'status') return <TableCell key={columnId}><Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap><RequestStatusBadge status={item.status} />{item.frozen && <Tooltip title={item.fixed ? 'Окончательно зафиксирована ЗГД' : 'Заморожена экономистом'}><LockOutlinedIcon aria-label={item.fixed ? 'Окончательно зафиксирована ЗГД' : 'Заморожена экономистом'} color={item.fixed ? 'success' : 'warning'} fontSize="small" /></Tooltip>}</Stack></TableCell>;
     if (columnId === 'my_step') return <TableCell key={columnId}><Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>{(item.my_step_statuses || []).map((step, index) => <StepStatusBadge key={`${step.status}-${index}`} status={step.reviewed && step.status === 'on_approval' ? 'approved' : step.status} label={step.reviewed && step.status === 'on_approval' ? 'Согласовано' : undefined} />)}{!item.my_step_statuses?.length && '—'}</Stack></TableCell>;
-    if (columnId === 'planned') return <TableCell key={columnId}>{money(item.summary?.planned_sum)}</TableCell>;
-    if (columnId === 'approved') return <TableCell key={columnId}>{money(item.summary?.approved_sum ?? (item.status === 'cancelled' ? 0 : item.sum))}</TableCell>;
+    if (columnId === 'planned') return <TableCell key={columnId}>{money(requestAmounts(item).planned)}</TableCell>;
+    if (columnId === 'approved') return <TableCell key={columnId}>{money(requestAmounts(item).approved)}</TableCell>;
     return <TableCell key={columnId}>{item.summary?.items_count || 0}</TableCell>;
   };
   const renderRequestHeader = (
@@ -655,6 +704,10 @@ export default function RequestsPage({ user }: { user: User }) {
     />
   );
 
+  if (unitsLoading || requestsLoading || (user.role === 'zgd' && zgdDetailsLoading)) {
+    return <PageSkeleton variant="table" label="Загрузка заявок" />;
+  }
+
   return (
     <Stack spacing={3}>
       {exportError && <Alert severity="warning">{exportError}</Alert>}
@@ -671,6 +724,11 @@ export default function RequestsPage({ user }: { user: User }) {
                     {label}
                   </MenuItem>
                 ))}
+              </TextField>
+              <TextField select label="Вид бюджета" value={filters.flow} onChange={(event) => setFilters((current) => ({ ...current, flow: event.target.value as '' | 'expense' | 'income' }))} sx={filterFieldSx(180)}>
+                <MenuItem value="">Все</MenuItem>
+                <MenuItem value="expense">Расходы</MenuItem>
+                <MenuItem value="income">Доходы</MenuItem>
               </TextField>
               <TextField select label="Блокировка заявки" value={filters.frozen} onChange={(event) => setFilters((current) => ({ ...current, frozen: event.target.value }))} sx={filterFieldSx(220)}>
                 <MenuItem value="">Все заявки</MenuItem>
@@ -696,7 +754,10 @@ export default function RequestsPage({ user }: { user: User }) {
                   Добавить заявку
                 </Button>
               ) : null}
-              <Button startIcon={<TuneOutlinedIcon />} variant="outlined" onClick={() => setExportOpen(true)}>
+              <Button startIcon={<TuneOutlinedIcon />} variant="outlined" onClick={() => {
+                setExportSettings(exportSettingsFromRequestPage({ user, filters, visibleRequests, units }));
+                setExportOpen(true);
+              }}>
                 Настроить экспорт
               </Button>
             </Stack>
@@ -718,133 +779,17 @@ export default function RequestsPage({ user }: { user: User }) {
         </Stack>
       </Paper>
 
-      <Dialog open={exportOpen} onClose={() => setExportOpen(false)} fullWidth maxWidth="sm" fullScreen={fullScreenDialog} className="export-dialog">
-        <DialogTitle>Настройки экспорта</DialogTitle>
-        <DialogContent dividers>
-          <Stack spacing={2.5} sx={{ pt: 0.5 }}>
-            <Stack spacing={0.5}>
-              <Stack direction="row" spacing={0.5} alignItems="center">
-                <Typography fontWeight={700}>Состав выгрузки</Typography>
-                <Tooltip title="Выберите, включать в экспорт доходы, расходы или оба вида строк.">
-                  <IconButton size="small" aria-label="Нюансы состава выгрузки"><InfoOutlinedIcon fontSize="small" /></IconButton>
-                </Tooltip>
-              </Stack>
-              <TextField
-                select
-                label="Состав выгрузки"
-                value={exportSettings.export_kind}
-                onChange={(event) => setExportSettings((current) => ({ ...current, export_kind: event.target.value as 'all' | 'expense' | 'income' }))}
-                fullWidth
-                sx={{ mt: 1 }}
-              >
-                <MenuItem value="all">Доходы и расходы</MenuItem>
-                <MenuItem value="expense">Только расходы</MenuItem>
-                <MenuItem value="income">Только доходы</MenuItem>
-              </TextField>
-            </Stack>
-
-            <Stack spacing={0.75}>
-              <Stack direction="row" spacing={0.5} alignItems="center">
-                <Typography fontWeight={700}>Объединения</Typography>
-                <Tooltip title="Отметьте объединение, чтобы включить все его дочерние объединения, или отметьте только нужные. Без выбора экспортируются все доступные объединения.">
-                  <IconButton size="small" aria-label="Нюансы выбора области экспорта"><InfoOutlinedIcon fontSize="small" /></IconButton>
-                </Tooltip>
-              </Stack>
-              <FormGroup sx={{ mt: 0.5 }}>
-                {departments.map((department) => {
-                  const departmentSelected = exportSettings.department_ids.includes(department.id);
-                  const modules = modulesByDepartment.get(department.id) || [];
-                  const modulesExpanded = expandedExportDepartments.includes(department.id);
-                  return (
-                    <Stack key={department.id} spacing={0}>
-                      <Stack direction="row" alignItems="center">
-                        <FormControlLabel
-                          sx={{ flex: 1, mr: 0 }}
-                          control={<Checkbox checked={departmentSelected} onChange={() => toggleExportDepartment(department.id)} />}
-                          label={department.name}
-                        />
-                        {modules.length > 0 && (
-                          <IconButton
-                            size="small"
-                            aria-label={`${modulesExpanded ? 'Скрыть' : 'Показать'} дочерние объединения ${department.name}`}
-                            onClick={() => toggleExportDepartmentModules(department.id)}
-                          >
-                            <ExpandMoreIcon sx={{ transform: modulesExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 150ms ease' }} />
-                          </IconButton>
-                        )}
-                      </Stack>
-                      <Collapse in={modulesExpanded} timeout="auto" unmountOnExit>
-                        <FormGroup>
-                          {modules.map((module) => (
-                            <FormControlLabel
-                              key={module.id}
-                              sx={{ ml: 3 }}
-                              control={<Checkbox checked={departmentSelected || exportSettings.module_ids.includes(module.id)} disabled={departmentSelected} onChange={() => toggleExportModule(module.id)} />}
-                              label={module.name}
-                            />
-                          ))}
-                        </FormGroup>
-                      </Collapse>
-                    </Stack>
-                  );
-                })}
-              </FormGroup>
-            </Stack>
-
-            <Stack spacing={0.5}>
-              <Stack direction="row" spacing={0.5} alignItems="center">
-                <Typography fontWeight={700}>Заявки и статусы</Typography>
-                <Tooltip title="По умолчанию выгружаются утверждённые заявки. При необходимости отдельно включите отклонённые; отменённые заявки не экспортируются.">
-                  <IconButton size="small" aria-label="Нюансы статусов экспорта"><InfoOutlinedIcon fontSize="small" /></IconButton>
-                </Tooltip>
-              </Stack>
-              <FormGroup sx={{ mt: 0.5 }}>
-                {exportStatusOptions.map((status) => (
-                  <FormControlLabel
-                    key={status}
-                    control={<Checkbox checked={exportSettings.statuses.includes(status)} onChange={() => toggleExportStatus(status)} />}
-                    label={requestStatusLabels[status]}
-                  />
-                ))}
-              </FormGroup>
-              <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mt: 0.5 }}>
-                <FormControlLabel
-                  sx={{ mr: 0 }}
-                  control={<Switch checked={exportSettings.fixed_only} onChange={(event) => setExportSettings((current) => ({ ...current, fixed_only: event.target.checked }))} />}
-                  label="Экспортировать только зафиксированные заявки"
-                />
-                <Tooltip title="В выгрузку попадут только заявки с зафиксированным бюджетом среди выбранных статусов.">
-                  <IconButton size="small" aria-label="Нюансы экспорта зафиксированных заявок"><InfoOutlinedIcon fontSize="small" /></IconButton>
-                </Tooltip>
-              </Stack>
-            </Stack>
-
-            <Stack spacing={0.25}>
-              <Stack direction="row" spacing={0.5} alignItems="center">
-                <FormControlLabel
-                  sx={{ mr: 0 }}
-                  control={<Switch checked={exportSettings.include_files} onChange={(event) => setExportSettings((current) => ({ ...current, include_files: event.target.checked }))} />}
-                  label="Включить прикреплённые файлы"
-                />
-                <Tooltip title="С файлами выгружается ZIP-архив: Excel и папка вложений, разложенных по заявкам и строкам бюджета. Без файлов будет скачан только Excel.">
-                  <IconButton size="small" aria-label="Нюансы выгрузки файлов"><InfoOutlinedIcon fontSize="small" /></IconButton>
-                </Tooltip>
-              </Stack>
-            </Stack>
-          </Stack>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, py: 2 }}>
-          <Button onClick={() => setExportOpen(false)}>Отмена</Button>
-          <Button
-            variant="contained"
-            startIcon={<FileDownloadIcon />}
-            onClick={exportClosed}
-            disabled={exportSettings.statuses.length === 0}
-          >
-            Экспортировать
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <ExportSettingsDialog
+        open={exportOpen}
+        settings={exportSettings}
+        units={units}
+        statusOptions={CLOSED_EXPORT_STATUSES}
+        filterNote="Настройки подставлены из фильтров страницы. В выгрузку попадут только заявки, которые видны в таблице."
+        exporting={exporting}
+        onClose={() => setExportOpen(false)}
+        onChange={setExportSettings}
+        onExport={() => { void exportClosed(); }}
+      />
 
       {user.role === 'zgd' ? (
         <Paper className="table-surface" elevation={0}>
@@ -975,7 +920,7 @@ export default function RequestsPage({ user }: { user: User }) {
           </TableHead>
           <TableBody>
             {tableRequests.map((item) => {
-              const canDelete = item.status === 'draft' && user.role === 'employee';
+              const canDelete = item.status === 'draft' && user.role === 'employee' && item.available_actions?.includes('delete');
               const unitName = formatUnitName(item.unit_id);
               const packageItem = packageByRequestId.get(item.id);
               const isPackageStart = packageItem?.requests[0]?.id === item.id;
@@ -1039,12 +984,12 @@ export default function RequestsPage({ user }: { user: User }) {
                     <TableCell>
                       <Stack direction="row" spacing={0.5} justifyContent="flex-start">
                         {canDelete ? (
-                          <Tooltip title="Удалить">
+                          <Tooltip title="Удалить черновик">
                             <IconButton
                               size="small"
                               color="error"
                               onClick={(event) => { event.stopPropagation(); setDeleteTarget(item); }}
-                              aria-label="Удалить"
+                              aria-label="Удалить черновик"
                             >
                               <DeleteOutlineIcon fontSize="small" />
                             </IconButton>
@@ -1060,7 +1005,7 @@ export default function RequestsPage({ user }: { user: User }) {
                         <RequestStatusBadge status={item.status} />
                         {item.frozen && (
                           <Tooltip title={item.fixed ? 'Окончательно зафиксирована ЗГД' : 'Заморожена экономистом'}>
-                            <LockOutlinedIcon color={item.fixed ? 'success' : 'warning'} fontSize="small" />
+                            <LockOutlinedIcon aria-label={item.fixed ? 'Окончательно зафиксирована ЗГД' : 'Заморожена экономистом'} color={item.fixed ? 'success' : 'warning'} fontSize="small" />
                           </Tooltip>
                         )}
                       </Stack>
@@ -1100,7 +1045,7 @@ export default function RequestsPage({ user }: { user: User }) {
 
       <ConfirmDialog
         open={!!deleteTarget}
-        title="Удалить заявку?"
+        title="Удалить черновик?"
         maxWidth="md"
         description={
           deleteTarget ? (
@@ -1160,12 +1105,37 @@ export default function RequestsPage({ user }: { user: User }) {
             </Stack>
           ) : null
         }
-        confirmLabel="Удалить"
+        confirmLabel="Удалить черновик"
         confirmColor="error"
         pending={deleteRequest.isPending}
         onClose={() => setDeleteTarget(null)}
         onConfirm={() => deleteTarget && deleteRequest.mutate(deleteTarget.id)}
       />
+      <RequestHistoryDrawer target={historyTarget} onClose={() => setHistoryTarget(null)} />
     </Stack>
   );
+}
+
+export default function RequestsPage({ user }: { user: User }) {
+  const { data: units = [], isPending: unitsPending } = useQuery({
+    queryKey: ['units'],
+    queryFn: async () => (await api.get<Unit[]>('/units')).data,
+  });
+  const isCfoResponsible = user.role === 'employee'
+    && (user.unit_ids || []).some((unitId) => units.some((unit) => unit.id === unitId && unit.type === 'cfo'));
+  const isReviewer = isCfoResponsible || ['admin', 'economist', 'approver', 'zgd'].includes(user.role);
+
+  if (user.role === 'employee' && unitsPending) {
+    return <PageSkeleton variant="table" label="Загрузка заявок" />;
+  }
+
+  if (isReviewer) {
+    return (
+      <Suspense fallback={<PageSkeleton variant="table" label="Загрузка реестра заявок" />}>
+        <ApprovalRegister user={user} inRequestsPage />
+      </Suspense>
+    );
+  }
+
+  return <RequestsListPage user={user} />;
 }

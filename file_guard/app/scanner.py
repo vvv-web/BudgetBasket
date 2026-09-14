@@ -11,6 +11,8 @@ from pathlib import Path, PurePosixPath
 from .antivirus import AntivirusUnavailableError, ClamAVScanner, DisabledAntivirusScanner
 from .config import settings
 from .office_security import validate_office_archive
+from .excel_sanitizer import ExcelSanitizationError, XLSX_MIME, sanitize_excel
+from .schemas import ProcessedFile
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +59,6 @@ _DANGEROUS_EXTENSIONS = frozenset(
         ".com",
         ".svg",
         ".docm",
-        ".xlsm",
         ".pptm",
         ".rar",
         ".7z",
@@ -69,6 +70,7 @@ _EXPECTED_MIME_BY_EXTENSION = {
     ".pdf": {"application/pdf"},
     ".docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
     ".xlsx": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+    ".xlsm": {"application/vnd.ms-excel.sheet.macroenabled.12"},
     ".zip": {"application/zip"},
     ".jpg": {"image/jpeg"},
     ".jpeg": {"image/jpeg"},
@@ -169,6 +171,57 @@ class FileScanner:
             _hash_prefix(sha256),
         )
         return verdict
+
+    def process_bytes(
+        self,
+        *,
+        original_name: str,
+        content_bytes: bytes,
+        claimed_mime_type: str | None = None,
+    ) -> ProcessedFile:
+        """Validate source bytes and return only bytes approved for storage."""
+        source_verdict = self.scan_bytes(
+            original_name=original_name,
+            content_bytes=content_bytes,
+            claimed_mime_type=claimed_mime_type,
+        )
+        if not source_verdict.allowed:
+            raise ValueError(source_verdict.reason_code or "invalid_office_document")
+        safe_name = self._normalize_filename(original_name)
+        extension = Path(safe_name).suffix.lower()
+        if extension not in {".xlsx", ".xlsm"}:
+            return ProcessedFile(
+                content=content_bytes, original_name=safe_name, output_name=safe_name,
+                source_mime_type=source_verdict.detected_mime, output_mime_type=source_verdict.detected_mime,
+                source_size_bytes=len(content_bytes), output_size_bytes=len(content_bytes),
+                source_sha256=source_verdict.sha256, output_sha256=source_verdict.sha256,
+                sanitized=False, removed_components=(), warnings=(),
+            )
+        if not settings.excel_sanitization_enabled:
+            raise ValueError("excel_sanitization_failed")
+        try:
+            sanitized = sanitize_excel(content_bytes)
+        except ExcelSanitizationError as exc:
+            message = str(exc).lower()
+            if "encrypted" in message:
+                raise ValueError("encrypted_excel_not_allowed") from exc
+            if "limit" in message or "too large" in message or "exceeds" in message:
+                raise ValueError("excel_limit_exceeded") from exc
+            raise ValueError("excel_sanitization_failed") from exc
+        output_name = f"{Path(safe_name).stem}.cleaned.xlsx"
+        # Re-run all structural and AV checks against the bytes that will be stored.
+        output_verdict = self.scan_bytes(
+            original_name=output_name, content_bytes=sanitized.content, claimed_mime_type=XLSX_MIME,
+        )
+        if not output_verdict.allowed:
+            raise ValueError("sanitized_file_invalid")
+        return ProcessedFile(
+            content=sanitized.content, original_name=safe_name, output_name=output_name,
+            source_mime_type=source_verdict.detected_mime, output_mime_type=XLSX_MIME,
+            source_size_bytes=len(content_bytes), output_size_bytes=len(sanitized.content),
+            source_sha256=source_verdict.sha256, output_sha256=output_verdict.sha256,
+            sanitized=True, removed_components=sanitized.removed_components, warnings=sanitized.warnings,
+        )
 
     def _scan_validated_content(
         self,
@@ -439,11 +492,14 @@ class FileScanner:
         try:
             with zipfile.ZipFile(io.BytesIO(content_bytes)) as archive:
                 names = set(archive.namelist())
+                content_types = archive.read("[Content_Types].xml") if "[Content_Types].xml" in names else b""
         except zipfile.BadZipFile:
             return None
         if "word/document.xml" in names:
             return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         if "xl/workbook.xml" in names:
+            if b"macroEnabled" in content_types or b"macroenabled" in content_types.lower():
+                return "application/vnd.ms-excel.sheet.macroenabled.12"
             return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         return None
 
@@ -451,7 +507,7 @@ class FileScanner:
         logger.info("Запускаем структурную проверку содержимого файла: extension=%s", extension)
         if extension == ".pdf":
             return self._validate_pdf(content_bytes)
-        if extension in {".docx", ".xlsx"}:
+        if extension in {".docx", ".xlsx", ".xlsm"}:
             return self._validate_office(extension=extension, content_bytes=content_bytes)
         if extension == ".zip":
             return self._validate_zip(content_bytes)
@@ -463,7 +519,7 @@ class FileScanner:
     def _looks_like_extension(*, extension: str, content_bytes: bytes) -> bool:
         if extension == ".pdf":
             return content_bytes.startswith(b"%PDF-")
-        if extension in {".docx", ".xlsx"}:
+        if extension in {".docx", ".xlsx", ".xlsm"}:
             return content_bytes.startswith(b"PK\x03\x04")
         if extension == ".zip":
             return FileScanner._looks_like_zip(content_bytes)
