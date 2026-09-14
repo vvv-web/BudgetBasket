@@ -13,12 +13,13 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
+import MenuItem from '@mui/material/MenuItem';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import guideContentJson from '../content/userGuideContent.json';
 import type { Role } from '../types';
 
@@ -34,9 +35,10 @@ type GuideContent = {
   usage: string;
   journey: JourneyStage[];
   common: GuideSection[];
-  roles: Record<Role, RoleGuide>;
+  roles: Record<Role | 'cfo', RoleGuide>;
 };
 type IndexedSection = { key: string; section: GuideSection };
+const GUIDE_SCROLL_SETTLE_DELAY = 350;
 
 export const userGuideContent = guideContentJson as GuideContent;
 
@@ -150,14 +152,17 @@ function SectionAccordion({ item, expanded, onToggle }: { item: IndexedSection; 
   );
 }
 
-export function UserGuideDialog({ role, open, onClose }: { role: Role; open: boolean; onClose: () => void }) {
+export function UserGuideDialog({ role, open, onClose, defaultEmployeeAssignment = 'employee' }: { role: Role; open: boolean; onClose: () => void; defaultEmployeeAssignment?: 'employee' | 'cfo' }) {
   const theme = useTheme();
   const fullScreen = useMediaQuery(theme.breakpoints.down('sm'));
-  const roleGuide = userGuideContent.roles[role];
+  const [employeeAssignment, setEmployeeAssignment] = useState<'employee' | 'cfo'>(defaultEmployeeAssignment);
+  const roleGuide = userGuideContent.roles[role === 'employee' ? employeeAssignment : role];
   const commonSections = useMemo(() => userGuideContent.common.map((section, index) => ({ key: `common-${index}`, section })), []);
   const roleSections = useMemo(() => roleGuide.sections.map((section, index) => ({ key: `role-${index}`, section })), [roleGuide]);
   const [query, setQuery] = useState('');
   const [expandedSection, setExpandedSection] = useState('common-0');
+  const [scrollTarget, setScrollTarget] = useState<string | null>(null);
+  const dialogContentRef = useRef<HTMLDivElement | null>(null);
   const normalizedQuery = query.trim().toLocaleLowerCase('ru');
   const matches = (item: IndexedSection) => JSON.stringify(item.section).toLocaleLowerCase('ru').includes(normalizedQuery);
   const visibleCommon = normalizedQuery ? commonSections.filter(matches) : commonSections;
@@ -165,15 +170,40 @@ export function UserGuideDialog({ role, open, onClose }: { role: Role; open: boo
 
   useEffect(() => {
     if (open) {
+      setEmployeeAssignment(defaultEmployeeAssignment);
       setQuery('');
       setExpandedSection('common-0');
+      setScrollTarget(null);
     }
-  }, [open, role]);
+  }, [open, role, defaultEmployeeAssignment]);
+
+  useEffect(() => {
+    if (!scrollTarget) return;
+    const timer = window.setTimeout(() => {
+      const section = document.getElementById(`guide-${scrollTarget}`);
+      const container = dialogContentRef.current;
+      if (section && container && typeof container.scrollTo === 'function') {
+        const containerRect = container.getBoundingClientRect();
+        const sectionRect = section.getBoundingClientRect();
+        const top = Math.max(0, container.scrollTop + sectionRect.top - containerRect.top - 12);
+        container.scrollTop = top;
+        container.scrollTo({ top, behavior: 'auto' });
+      }
+      setScrollTarget(null);
+    }, GUIDE_SCROLL_SETTLE_DELAY);
+    return () => window.clearTimeout(timer);
+  }, [scrollTarget]);
+
+  const toggleSection = (key: string) => {
+    const nextSection = expandedSection === key ? '' : key;
+    setExpandedSection(nextSection);
+    setScrollTarget(nextSection || null);
+  };
 
   const renderGroup = (items: IndexedSection[]) => items.length > 0 && (
     <Stack spacing={1.25}>
       {items.map((item) => (
-        <SectionAccordion key={item.key} item={item} expanded={Boolean(normalizedQuery) || expandedSection === item.key} onToggle={() => setExpandedSection(expandedSection === item.key ? '' : item.key)} />
+        <SectionAccordion key={item.key} item={item} expanded={Boolean(normalizedQuery) || expandedSection === item.key} onToggle={() => toggleSection(item.key)} />
       ))}
     </Stack>
   );
@@ -184,13 +214,24 @@ export function UserGuideDialog({ role, open, onClose }: { role: Role; open: boo
         <Typography component="span" variant="h6" fontWeight={700}>{userGuideContent.title}</Typography>
         <IconButton aria-label="Закрыть руководство" onClick={onClose} sx={{ position: 'absolute', right: 12, top: 12, color: 'text.secondary' }}><CloseIcon /></IconButton>
       </DialogTitle>
-      <DialogContent dividers sx={{ position: 'relative', overflowY: 'auto', overflowX: 'hidden', px: { xs: 1.5, sm: 5 }, py: { xs: 2.5, sm: 4 } }}>
+      <DialogContent ref={dialogContentRef} dividers sx={{ position: 'relative', overflowY: 'auto', overflowX: 'hidden', px: { xs: 1.5, sm: 5 }, py: { xs: 2.5, sm: 4 } }}>
         <Stack spacing={2.75} sx={{ width: '100%', maxWidth: 1120, mx: 'auto' }}>
           <Box sx={{ px: { xs: 0, sm: 1 } }}>
             <Typography variant="body2" sx={{ lineHeight: 1.6, textAlign: 'justify' }}>{userGuideContent.intro}</Typography>
             <Typography variant="body2" sx={{ mt: 2, lineHeight: 1.6, textAlign: 'justify' }}><Box component="strong">Как пользоваться. </Box>{userGuideContent.usage}</Typography>
           </Box>
           <ProcessJourney stages={userGuideContent.journey} />
+          {role === 'employee' && (
+            <TextField select label="Моя зона ответственности" value={employeeAssignment} onChange={(event) => {
+              setEmployeeAssignment(event.target.value as 'employee' | 'cfo');
+              setQuery('');
+              setExpandedSection('role-0');
+              setScrollTarget('role-0');
+            }} helperText="У обоих назначений роль «Сотрудник». Выберите свою область работы; выбор памятки не меняет права доступа.">
+              <MenuItem value="employee">Ответственный за модуль</MenuItem>
+              <MenuItem value="cfo">Ответственный за ЦФО</MenuItem>
+            </TextField>
+          )}
           <Stack spacing={2} sx={{ minWidth: 0 }}>
               <Typography variant="h5" color="primary.main" fontWeight={700}>Общая часть</Typography>
               <TextField value={query} onChange={(event) => setQuery(event.target.value)} label="Поиск по руководству" placeholder="Например: файл, возврат, статус" size="small" fullWidth InputProps={{ startAdornment: <InputAdornment position="start"><SearchOutlinedIcon fontSize="small" /></InputAdornment> }} />

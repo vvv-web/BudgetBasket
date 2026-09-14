@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Role } from '../types';
 import { UserGuideDialog, userGuideContent } from './UserGuideDialog';
@@ -11,7 +11,11 @@ describe('UserGuideDialog', () => {
   it('contains one shared guide and instructions for all five application roles', () => {
     expect(userGuideContent.common.length).toBeGreaterThanOrEqual(10);
     expect(userGuideContent.journey).toHaveLength(5);
-    expect(Object.keys(userGuideContent.roles).sort()).toEqual([...roles].sort());
+    expect(Object.keys(userGuideContent.roles).sort()).toEqual([...roles, 'cfo'].sort());
+    expect(userGuideContent.usage).toContain('общую часть');
+    expect(userGuideContent.usage).toContain('поиск по памятке');
+    expect(userGuideContent.usage).not.toContain('Ответственный за модуль');
+    expect(userGuideContent.usage).not.toContain('Ответственный за ЦФО');
 
     roles.forEach((role) => {
       expect(userGuideContent.roles[role].intro.length).toBeGreaterThan(40);
@@ -31,19 +35,37 @@ describe('UserGuideDialog', () => {
   });
 
   it('keeps CFO responsibility as an explicit employee assignment', () => {
-    const employeeText = JSON.stringify(userGuideContent.roles.employee);
-    expect(employeeText).toContain('Если вы ответственны за ЦФО');
-    expect(employeeText).toContain('Это не отдельная базовая роль');
+    render(<UserGuideDialog role="employee" open onClose={vi.fn()} />);
+    expect(screen.getByText('Работа в роли: Ответственный за модуль')).toBeTruthy();
+    expect(screen.queryByText('11. Доступ ответственного за ЦФО')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Поиск по руководству'), { target: { value: 'помесячный план' } });
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Моя зона ответственности' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Ответственный за ЦФО' }));
+    expect(screen.getByText('Работа в роли: Ответственный за ЦФО')).toBeTruthy();
+    expect(screen.getByText('11. Доступ ответственного за ЦФО')).toBeTruthy();
+    expect(screen.queryByText('12. Создание заявки')).toBeNull();
+    expect((screen.getByLabelText('Поиск по руководству') as HTMLInputElement).value).toBe('');
+    expect(userGuideContent.roles.cfo.intro).toContain('В приложении ваша роль — «Сотрудник»');
   });
 
   it('uses the document wording for the budget flow', () => {
     expect(userGuideContent.journey.map((stage) => stage.detail)).toEqual([
-      'Сотрудник формирует потребность модуля в заявку',
-      'Ответственный ЦФО проверяет заявки модулей',
-      'Проверяет суммы, определяет сумму для утверждения и замораживает бюджет',
-      'Позиции проходят настроенный граф этапов согласования',
-      'Финальный этап согласования, после него заявки недоступны для редактирования',
+      'Ответственный за модуль заполняет и отправляет заявку',
+      'Ответственный за ЦФО проверяет строки и передаёт бюджет экономисту',
+      'Экономист проверяет суммы и передаёт бюджет на согласование',
+      'Проверяющий рассматривает бюджет или возвращает замечания',
+      'ЗГД согласует строки и отдельно фиксирует бюджет, блокируя его изменение',
     ]);
+  });
+
+  it('opens CFO instructions when the employee is assigned to a CFO', () => {
+    render(<UserGuideDialog role="employee" defaultEmployeeAssignment="cfo" open onClose={vi.fn()} />);
+    expect(screen.getByText('Работа в роли: Ответственный за ЦФО')).toBeTruthy();
+    expect(screen.queryByText('12. Создание заявки')).toBeNull();
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Моя зона ответственности' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Ответственный за модуль' }));
+    expect(screen.getByText('Работа в роли: Ответственный за модуль')).toBeTruthy();
+    expect(screen.queryByText('11. Доступ ответственного за ЦФО')).toBeNull();
   });
 
   it('expands a collapsed instruction section', () => {
@@ -56,6 +78,22 @@ describe('UserGuideDialog', () => {
     expect(summary?.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(summary!);
     expect(summary?.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('scrolls an expanded section to the top of the guide window', async () => {
+    const scrollTo = vi.fn();
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: scrollTo });
+
+    try {
+      render(<UserGuideDialog role="employee" open onClose={vi.fn()} />);
+      const summary = screen.getByRole('button', { name: userGuideContent.common[1].title });
+      fireEvent.click(summary);
+
+      await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' }));
+    } finally {
+      Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: originalScrollTo });
+    }
   });
 
   it('filters and expands matching sections', () => {

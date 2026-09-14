@@ -46,7 +46,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { chatNotificationsWebSocketUrl } from '../api/websocket';
-import type { Profile, User } from '../types';
+import type { Profile, Unit, User } from '../types';
 import { roleLabels } from '../utils/labels';
 import { canAccessApproval } from '../utils/roles';
 import { AUTH_TOKEN_KEY } from '../utils/session';
@@ -137,6 +137,12 @@ export function Layout({
   const [toast, setToast] = useState<{ message: string; severity: ToastSeverity; key: number } | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
+  const { data: guideUnits = [] } = useQuery({
+    queryKey: ['units'],
+    queryFn: async () => (await api.get<Unit[]>('/units')).data,
+    enabled: guideOpen && user.role === 'employee',
+  });
+  const guideAssignment = guideUnits.some((unit) => unit.type === 'cfo' && user.unit_ids?.includes(unit.id)) ? 'cfo' : 'employee';
   const [chatInboxOpen, setChatInboxOpen] = useState(false);
   useEffect(() => {
     const openInbox = () => setChatInboxOpen(true);
@@ -512,7 +518,7 @@ export function Layout({
         </Box>
       </Drawer>
 
-      <UserGuideDialog role={user.role} open={guideOpen} onClose={() => setGuideOpen(false)} />
+      <UserGuideDialog role={user.role} open={guideOpen} defaultEmployeeAssignment={guideAssignment} onClose={() => setGuideOpen(false)} />
       {canUseChat && (
         <>
           <Box className="global-chat-launcher">

@@ -1605,7 +1605,7 @@ function ApprovalRoutePanel({ requestId, user }: { requestId?: string; user: Use
     if (step.unit_id) return 'Ответственный за ЦФО';
     if (step.is_economist_step) return 'Экономист ЦФО';
     if (step.user?.role === 'zgd') return 'ЗГД';
-    return 'Согласующий';
+    return 'Проверяющий';
   };
   const displayStatus = (step: ApprovalStep) => step.request_status || step.status;
   const {

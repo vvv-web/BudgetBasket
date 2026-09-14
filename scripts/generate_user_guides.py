@@ -13,8 +13,9 @@ from docx.shared import Cm, Pt, RGBColor
 ROOT = Path(__file__).resolve().parents[1]
 CONTENT_PATH = ROOT / "frontend" / "src" / "content" / "userGuideContent.json"
 OUTPUT_PATH = ROOT / "docs" / "user-guides" / "BudgetBasket_User_Guide.docx"
-ROLE_ORDER = ("employee", "economist", "approver", "zgd", "admin")
+ROLE_ORDER = ("employee", "cfo", "economist", "approver", "zgd", "admin")
 ROLE_COLORS = {
+    "cfo": "2C5F7C",
     "employee": "2C5F7C",
     "economist": "2C5F7C",
     "approver": "2C5F7C",
@@ -124,7 +125,7 @@ def add_cover(document: Document, content: dict) -> None:
     document.add_paragraph()
     usage = document.add_paragraph()
     usage.add_run("Как пользоваться. ").bold = True
-    usage.add_run("Сначала ознакомьтесь с общей частью, затем перейдите к разделу своей роли. В каждом сценарии действия, результат и следующий шаг приведены в одном порядке.")
+    usage.add_run(content["usage"])
     usage.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
     document.add_paragraph()
