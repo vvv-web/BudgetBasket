@@ -12,12 +12,12 @@ describe('websocket urls', () => {
     vi.stubEnv('VITE_API_URL', '/api');
     vi.stubGlobal('location', { origin: ORIGIN } as Location);
 
-    const { requestChatWebSocketUrl, chatNotificationsWebSocketUrl } = await import('./websocket');
+    const { chatWebSocketUrl, chatNotificationsWebSocketUrl } = await import('./websocket');
 
-    const chatUrl = new URL(requestChatWebSocketUrl('req-uuid', 'tok-1'));
+    const chatUrl = new URL(chatWebSocketUrl('chat-uuid', 'tok-1'));
     expect(chatUrl.hostname).toBe('budgetbasket.acom-offer-desk.ru');
     expect(chatUrl.protocol).toBe('wss:');
-    expect(chatUrl.pathname).toBe('/api/ws/requests/req-uuid/chat');
+    expect(chatUrl.pathname).toBe('/api/ws/chats/chat-uuid');
     expect(chatUrl.searchParams.get('token')).toBe('tok-1');
 
     const inboxUrl = new URL(chatNotificationsWebSocketUrl('tok-2'));
@@ -29,9 +29,9 @@ describe('websocket urls', () => {
     vi.stubEnv('VITE_API_URL', 'http://localhost:8000');
     vi.stubGlobal('location', { origin: 'http://localhost:5173' } as Location);
 
-    const { requestChatWebSocketUrl } = await import('./websocket');
-    const chatUrl = new URL(requestChatWebSocketUrl('abc', 't'));
+    const { chatWebSocketUrl } = await import('./websocket');
+    const chatUrl = new URL(chatWebSocketUrl('abc', 't'));
     expect(chatUrl.host).toBe('localhost:8000');
-    expect(chatUrl.pathname).toBe('/ws/requests/abc/chat');
+    expect(chatUrl.pathname).toBe('/ws/chats/abc');
   });
 });
