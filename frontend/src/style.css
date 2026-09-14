@@ -1295,6 +1295,7 @@
     flex: 0 1 560px;
     min-width: 0;
     justify-content: flex-end;
+    flex-wrap: wrap;
   }
 
   .dashboard-breakdown-tabs {
@@ -1304,6 +1305,14 @@
   .dashboard-breakdown-selection {
     flex: 1 1 280px;
     min-width: 240px;
+  }
+
+  .dashboard-panel-heading:has(.dashboard-breakdown-controls) {
+    flex-wrap: wrap;
+  }
+
+  .dashboard-panel-heading:has(.dashboard-breakdown-controls) > :first-child {
+    flex: 1 1 300px;
   }
 
   .dashboard-donut {
@@ -2421,9 +2430,34 @@
   }
 }
 
+@media (max-width: 1199.95px) {
+  .requests-toolbar-actions {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+    width: 100%;
+    gap: 8px !important;
+  }
+
+  .requests-toolbar-actions > *,
+  .requests-toolbar-actions .MuiButton-root {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .app-main:has(.approval-register-page) .requests-toolbar-actions .MuiButton-root {
+    min-height: 44px;
+    height: auto;
+    white-space: normal;
+  }
+}
+
 @media (max-width: 900px) {
+  .app-main:has(.approval-register-page) {
+    padding: 16px 14px;
+  }
+
   .app-main {
-    padding: 16px 14px 28px;
+    padding: 16px 14px;
   }
 
   .login-content {
@@ -2464,12 +2498,22 @@
 
   .dashboard-article-filter {
     flex-basis: auto;
+    min-width: 0;
     width: 100%;
   }
 
   .dashboard-breakdown-controls,
   .dashboard-breakdown-selection {
     width: 100%;
+    min-width: 0;
+  }
+
+  .dashboard-breakdown-controls {
+    flex: 1 1 100%;
+  }
+
+  .dashboard-breakdown-selection {
+    flex-basis: auto;
   }
 
   .dashboard-status-summary {
@@ -2539,20 +2583,34 @@
     height: calc(100dvh - 220px);
   }
 
-  .approval-route-mobile-accordion {
-    display: block;
-  }
-
-  .approval-route-stepper--horizontal {
-    display: none;
-  }
-
-  .approval-route-mobile-details .approval-route-stepper--vertical {
-    display: flex;
-  }
 }
 
 @media (max-width: 600px) {
+  .page-actions .MuiButton-root,
+  .app-main:has(.approval-register-page) .page-actions .MuiButton-root,
+  .approval-register-page .approval-register-filters .MuiButton-root {
+    height: auto;
+    min-height: 44px;
+    white-space: normal;
+  }
+
+  .chat-inbox-drawer,
+  .request-chat-drawer,
+  .request-history-drawer {
+    height: 100dvh;
+    padding-bottom: env(safe-area-inset-bottom);
+    box-sizing: border-box;
+  }
+
+  .chat-inbox-drawer .request-chat-composer .MuiTextField-root {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  .dashboard-panel-heading {
+    flex-wrap: wrap;
+  }
+
   .surface-pad {
     padding: 14px;
   }
@@ -2677,7 +2735,20 @@
   }
 
   .dashboard-article-amounts {
-    min-width: 132px;
+    min-width: 0;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .chat-message-forward {
+    opacity: 1;
+  }
+
+  .approval-graph-card .approval-graph-link-handle.is-outbound {
+    opacity: 1;
+    pointer-events: auto;
+    width: 44px;
+    height: 44px;
   }
 }
 
@@ -2827,5 +2898,20 @@
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+/* Keep these after the base route styles so the mobile presentation wins. */
+@media (max-width: 900px) {
+  .approval-route-mobile-accordion {
+    display: block;
+  }
+
+  .approval-route-stepper--horizontal {
+    display: none;
+  }
+
+  .approval-route-mobile-details .approval-route-stepper--vertical {
+    display: flex;
+  }
 }
 

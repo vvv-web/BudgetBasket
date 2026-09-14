@@ -621,7 +621,7 @@ function RegistryFilterBar({
   return (
     <Paper variant="outlined" className="approval-register-filters" sx={{ px: 1, py: 0.75, borderColor: 'rgba(15, 23, 42, 0.08)', borderRadius: 1.5, bgcolor: '#F8FAFC' }}>
       <Stack direction={{ xs: 'column', xl: 'row' }} spacing={0.75} alignItems={{ xl: 'center' }} justifyContent="space-between">
-        <Stack direction={{ xs: 'column', lg: 'row' }} spacing={0.75} useFlexGap sx={{ flex: 1, minWidth: 0, ...REGISTRY_FILTER_SX }}>
+        <Stack direction={{ xs: 'column', lg: 'row' }} spacing={0.75} useFlexGap sx={{ flex: 1, minWidth: 0, ...REGISTRY_FILTER_SX, '& > .MuiFormControl-root': { flex: { xs: '0 0 auto', lg: '1 1 auto' }, minWidth: { xs: 0 }, width: { xs: '100%', lg: 'auto' } } }}>
           <TextField select size="small" value={view} onChange={(event) => onViewChange(event.target.value as RegistryView)} inputProps={{ 'aria-label': 'Группировка реестра' }} sx={{ ...filterFieldSx(128), maxWidth: { lg: 128 } }}>
             {availableViews.map((key) => <MenuItem key={key} value={key} dense>{key === 'cfo' ? 'По ЦФО' : REGISTRY_VIEW_LABELS[key]}</MenuItem>)}
           </TextField>
@@ -2115,7 +2115,7 @@ function RegistryRowCells({ item, columns, widths, selected, active, user, appro
     {columns.map((column) => {
       const fixed = column.id === 'select' || column.id === 'structure';
       const align = ['requested', 'approved', 'rejected'].includes(column.id) ? 'right' : ['select', 'files'].includes(column.id) ? 'center' : 'left';
-      return <TableCell key={column.id} align={align} sx={{ width: widths[column.id], minWidth: widths[column.id], maxWidth: widths[column.id], overflow: 'hidden', position: fixed ? 'sticky' : 'static', left: column.id === 'structure' ? widths.select : 0, zIndex: fixed ? 2 : 0, bgcolor: '#fff !important', borderRight: '1px solid', borderColor: 'rgba(15, 23, 42, 0.06)', fontSize: 13 }}>{cells[column.id]}</TableCell>;
+      return <TableCell key={column.id} align={align} sx={{ width: widths[column.id], minWidth: widths[column.id], maxWidth: widths[column.id], overflow: 'hidden', position: { xs: 'static', md: fixed ? 'sticky' : 'static' }, left: column.id === 'structure' ? widths.select : 0, zIndex: fixed ? 2 : 0, bgcolor: '#fff !important', borderRight: '1px solid', borderColor: 'rgba(15, 23, 42, 0.06)', fontSize: 13 }}>{cells[column.id]}</TableCell>;
     })}
   </TableRow>;
 }
@@ -2327,7 +2327,7 @@ function ModuleGroupHeaderRow({
               minWidth: widths[column.id],
               maxWidth: widths[column.id],
               overflow: 'hidden',
-              position: fixed ? 'sticky' : 'static',
+              position: { xs: 'static', md: fixed ? 'sticky' : 'static' },
               left: column.id === 'structure' ? widths.select : 0,
               zIndex: fixed ? 2 : 0,
               bgcolor: '#fff !important',
@@ -2624,7 +2624,7 @@ function TreeRows({
                   minWidth: widths[column.id],
                   maxWidth: widths[column.id],
                   overflow: 'hidden',
-                  position: fixed ? 'sticky' : 'static',
+                  position: { xs: 'static', md: fixed ? 'sticky' : 'static' },
                   left: column.id === 'structure' ? widths.select : 0,
                   zIndex: fixed ? 2 : 0,
                   bgcolor: level === 0 ? '#f4f9ff !important' : '#fff !important',
@@ -3860,7 +3860,7 @@ export function ApprovalRegister({
     }
     if (!inRequestsPage) return pageChromeActions;
     return (
-      <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+      <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap className="requests-toolbar-actions">
         <Button size="small" color="inherit" startIcon={<HistoryOutlinedIcon />} onClick={() => setRegisterHistoryOpen(true)}>История согласования</Button>
         {exportButton}
         {columnTools}
@@ -3943,7 +3943,7 @@ export function ApprovalRegister({
     )}
     {error && <Alert severity="error">Не удалось загрузить реестр. Повторите попытку.</Alert>}
     <Stack direction={{ xs: 'column', xl: approvalMode ? 'row' : 'column' }} spacing={1.1} alignItems="stretch">
-    <TableContainer ref={tableContainerRef} component={Paper} variant="outlined" className="approval-register-table" sx={{ flex: 1, minWidth: 0, maxHeight: 'calc(100vh - 250px)', minHeight: 420, borderColor: 'rgba(15, 23, 42, 0.08)', borderRadius: 1.5 }}>
+    <TableContainer ref={tableContainerRef} component={Paper} variant="outlined" className="approval-register-table" sx={{ flex: 1, minWidth: 0, maxHeight: { xs: '70dvh', md: 'calc(100vh - 250px)' }, minHeight: { xs: 280, md: 420 }, borderColor: 'rgba(15, 23, 42, 0.08)', borderRadius: 1.5 }}>
       <Table stickyHeader size="small" sx={{ width: tableWidth, minWidth: tableWidth, tableLayout: 'fixed', '& td, & th': { borderRight: '1px solid', borderColor: 'rgba(15, 23, 42, 0.06)', fontSize: 12 } }}>
         <colgroup>{visibleColumns.map((column) => <col key={column.id} style={{ width: effectiveWidths[column.id] }} />)}</colgroup>
         <TableHead sx={{ '& .MuiTableCell-root': { bgcolor: '#F8FAFC !important', backgroundImage: 'none', boxShadow: 'inset 0 -1px 0 rgba(15, 23, 42, 0.08)', py: 0.55, px: 0.75, fontSize: 12, fontWeight: 700, color: 'text.secondary' } }}>
@@ -3968,7 +3968,7 @@ export function ApprovalRegister({
                     overflow: 'visible',
                     position: 'sticky',
                     top: 0,
-                    left: column.id === 'structure' ? effectiveWidths.select : fixed ? 0 : undefined,
+                    left: { xs: 'auto', md: column.id === 'structure' ? effectiveWidths.select : fixed ? 0 : undefined },
                     zIndex: fixed ? 5 : 4,
                     bgcolor: draggedColumn === column.id ? '#E8EEF8 !important' : '#F8FAFC !important',
                     cursor: movable ? 'grab' : 'default',

@@ -634,9 +634,9 @@ export function Layout({
           {showPageChrome ? (
             <Stack
               className="page-chrome"
-              direction={{ xs: 'column', sm: 'row' }}
+              direction={{ xs: 'column', lg: 'row' }}
               justifyContent="space-between"
-              alignItems={{ xs: 'stretch', sm: 'center' }}
+              alignItems={{ xs: 'stretch', lg: 'center' }}
               spacing={2}
             >
               <Stack direction="row" spacing={0.75} alignItems="center" minWidth={0}>
@@ -652,7 +652,7 @@ export function Layout({
                 {leading || <AppBreadcrumbs />}
               </Stack>
               {actions ? (
-                <Stack direction="row" spacing={1.25} flexWrap="wrap" useFlexGap className="page-actions">
+                <Stack direction="row" spacing={1.25} flexWrap="wrap" useFlexGap className="page-actions" sx={{ width: { xs: '100%', lg: 'auto' }, minWidth: 0 }}>
                   {actions}
                 </Stack>
               ) : null}

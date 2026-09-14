@@ -332,7 +332,7 @@ export function TableColumnHeader({
         anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
         transformOrigin={{ vertical: 'top', horizontal: 'left' }}
       >
-        <Stack spacing={1.25} sx={{ p: 1.5, width: 320 }}>
+        <Stack spacing={1.25} sx={{ p: 1.5, width: 320, maxWidth: 'calc(100vw - 32px)', boxSizing: 'border-box' }}>
           <Typography variant="subtitle2">{label}</Typography>
 
           {filterable && (
