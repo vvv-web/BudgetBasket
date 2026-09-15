@@ -538,7 +538,7 @@ function approvalStepTitle(step: ApprovalStep) {
       .join(' / ') || 'Модуль';
     return `Экономист · ${unitName}`;
   }
-  return step.user?.role === 'zgd' ? 'ЗГД' : `Согласующий · ${approvalUserName(step.user)}`;
+  return step.user?.role === 'zgd' ? 'ЗГД' : `Проверяющий · ${approvalUserName(step.user)}`;
 }
 
 function approvalRouteStepState(status: StepStatus | undefined): 'completed' | 'active' | 'pending' {
@@ -3206,7 +3206,7 @@ export default function RequestDetailsPage({ user }: { user: User }) {
               <Box>
                 <Typography variant="h6">Маршрут согласования заявки</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Согласующие по маршруту заявки и их контакты.
+                  Проверяющие по маршруту заявки и их контакты.
                 </Typography>
               </Box>
               {approvalRoutePending ? (

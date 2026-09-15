@@ -121,7 +121,7 @@ export function positionWorkflowPresentation(position: CfoPosition, user: User):
     if (position.status === 'approved') {
       return {
         stateLabel: 'Проверка строк завершена', stageLabel, ownerLabel: currentOwner,
-        requirement: 'Заморозьте согласованные значения и передайте позицию следующему согласующему.',
+        requirement: 'Заморозьте согласованные значения и передайте позицию следующему проверяющему.',
         action: 'freeze', actionLabel: 'Заморозить и передать', isCurrentUserAction: true, severity: 'warning',
       };
     }

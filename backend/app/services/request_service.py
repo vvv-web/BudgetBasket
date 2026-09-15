@@ -1962,7 +1962,7 @@ class RequestService:
                     "by_name": self._register_user_display_name(users, profiles, assignee_id),
                     "role_label": "Экономист ЦФО",
                 }
-            role_label = "ЗГД" if actor.get("role") == "zgd" else "Согласующий"
+            role_label = "ЗГД" if actor.get("role") == "zgd" else "Проверяющий"
             return {
                 "by_id": assignee_id,
                 "by_name": self._register_user_display_name(users, profiles, assignee_id),

@@ -46,7 +46,7 @@ describe('historyChanges', () => {
     }));
 
     expect(change).toEqual({
-      field: 'Решение согласующего',
+      field: 'Решение проверяющего',
       from: 'Ожидает решения',
       to: 'Согласовано',
     });
@@ -56,7 +56,7 @@ describe('historyChanges', () => {
     const [change] = historyChanges(entry({}, 'position_items_approved_at_step'));
 
     expect(change).toEqual({
-      field: 'Решение согласующего',
+      field: 'Решение проверяющего',
       from: 'Ожидает решения',
       to: 'Согласовано',
     });

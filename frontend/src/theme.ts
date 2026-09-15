@@ -84,8 +84,10 @@ export const theme = createTheme({
           whiteSpace: 'nowrap',
           [theme.breakpoints.down('sm')]: {
             minWidth: 0,
-            height: 40,
-            minHeight: 40,
+            height: 'auto',
+            minHeight: 44,
+            whiteSpace: 'normal',
+            overflowWrap: 'anywhere',
             paddingInline: 14,
           },
         }),
@@ -97,6 +99,8 @@ export const theme = createTheme({
           borderRadius: 10,
           [theme.breakpoints.down('sm')]: {
             minWidth: 0,
+            height: 'auto',
+            minHeight: 44,
             paddingInline: 10,
           },
         }),
@@ -140,6 +144,34 @@ export const theme = createTheme({
             margin: 12,
             width: 'calc(100% - 24px)',
             maxHeight: 'calc(100% - 24px)',
+            '&.MuiDialog-paperFullScreen': {
+              margin: 0,
+              width: '100%',
+              maxWidth: '100%',
+              height: '100dvh',
+              maxHeight: '100dvh',
+            },
+          },
+        }),
+      },
+    },
+    MuiDialogContent: {
+      styleOverrides: {
+        root: ({ theme }) => ({
+          minWidth: 0,
+          [theme.breakpoints.down('sm')]: { paddingInline: 16 },
+        }),
+      },
+    },
+    MuiDialogActions: {
+      styleOverrides: {
+        root: ({ theme }) => ({
+          [theme.breakpoints.down('sm')]: {
+            flexWrap: 'wrap',
+            gap: 8,
+            padding: '12px 16px max(12px, env(safe-area-inset-bottom))',
+            '& > :not(style) ~ :not(style)': { marginLeft: 0 },
+            '& .MuiButton-root': { flex: '1 1 auto' },
           },
         }),
       },
