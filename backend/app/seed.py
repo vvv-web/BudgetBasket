@@ -80,7 +80,7 @@ def seed_data(repo: Repository) -> None:
             {"user_id": ADMIN_ID, "name": "Анна", "second_name": "Игоревна", "last_name": "Администратор", "phone": "+7 900 000-00-01", "email": "admin@example.local", "max_link": ""},
             {"user_id": ECONOMIST_ID, "name": "Елена", "second_name": "Сергеевна", "last_name": "Экономист", "phone": "+7 900 000-00-02", "email": "economist@example.local", "max_link": ""},
             {"user_id": EMPLOYEE_ID, "name": "Иван", "second_name": "Петрович", "last_name": "Сотрудник", "phone": "+7 900 000-00-03", "email": "employee@example.local", "max_link": ""},
-            {"user_id": APPROVER_ID, "name": "Алексей", "second_name": "", "last_name": "Согласующий", "phone": "+7 900 000-00-04", "email": "approver@example.local", "max_link": ""},
+            {"user_id": APPROVER_ID, "name": "Алексей", "second_name": "", "last_name": "Проверяющий", "phone": "+7 900 000-00-04", "email": "approver@example.local", "max_link": ""},
             {"user_id": ZGD_ID, "name": "Мария", "second_name": "", "last_name": "ЗГД", "phone": "+7 900 000-00-05", "email": "zgd@example.local", "max_link": ""},
         ],
     )

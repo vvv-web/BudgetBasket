@@ -1,12 +1,11 @@
 import Box from '@mui/material/Box';
 import Link from '@mui/material/Link';
-import { useEffect, useRef, useState } from 'react';
 import bitrixLogo from '../assets/bitrix24-logo.png';
 import maxLogo from '../assets/max-logo-2025.png';
 
 const BITRIX_LINK = 'https://team.alabuga.ru/company/structure.php?set_filter_structure=Y&structure_UF_DEPARTMENT=8304&filter=Y&set_filter=Y';
 const MAX_CONTACT_LINK = 'https://max.ru/u/f9LHodD0cOIA4s2RhH3dW5NoCLRn88NF67UYfQe_rOnnM6Y1a7VW_vOUt5I';
-const NARROW_FOOTER_QUERY = '(max-width: 640px)';
+const NARROW_FOOTER_QUERY = '@media (max-width: 640px)';
 
 const iconLinkSx = {
   width: 34,
@@ -68,76 +67,21 @@ const brandSx = {
 };
 
 export function AppFooter() {
-  const layoutRef = useRef<HTMLDivElement | null>(null);
-  const requiredRowWidthRef = useRef(0);
-  const [shouldUseMobileLayout, setShouldUseMobileLayout] = useState(false);
-
-  useEffect(() => {
-    const element = layoutRef.current;
-    if (!element) return undefined;
-
-    const media = window.matchMedia?.(NARROW_FOOTER_QUERY) ?? {
-      matches: false,
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined,
-    };
-    const recoverLayoutGap = 28;
-
-    const updateLayout = () => {
-      if (media.matches) {
-        setShouldUseMobileLayout(true);
-        return;
-      }
-
-      setShouldUseMobileLayout((previous) => {
-        if (!previous) {
-          const hasOverflow = element.scrollWidth > element.clientWidth + 1;
-          if (hasOverflow) {
-            requiredRowWidthRef.current = Math.max(requiredRowWidthRef.current, element.scrollWidth);
-            return true;
-          }
-          return false;
-        }
-
-        const requiredRowWidth = requiredRowWidthRef.current;
-        if (requiredRowWidth <= 0) return false;
-        return element.clientWidth < requiredRowWidth + recoverLayoutGap;
-      });
-    };
-
-    updateLayout();
-    media.addEventListener('change', updateLayout);
-
-    if (typeof ResizeObserver !== 'undefined') {
-      const observer = new ResizeObserver(updateLayout);
-      observer.observe(element);
-      return () => {
-        observer.disconnect();
-        media.removeEventListener('change', updateLayout);
-      };
-    }
-
-    window.addEventListener('resize', updateLayout);
-    return () => {
-      window.removeEventListener('resize', updateLayout);
-      media.removeEventListener('change', updateLayout);
-    };
-  }, []);
-
   return (
     <Box
       component="footer"
       sx={{
         width: '100%',
+        containerType: 'inline-size',
         p: '6px 20px 18px',
+        '@media (max-width: 900px)': { paddingTop: 0, paddingBottom: '88px' },
         boxSizing: 'border-box',
         [NARROW_FOOTER_QUERY]: {
-          p: '0 12px 12px',
+          p: '0 12px 88px',
         },
       }}
     >
       <Box
-        ref={layoutRef}
         sx={{
           maxWidth: 1200,
           mx: 'auto',
@@ -147,7 +91,8 @@ export function AppFooter() {
           backgroundColor: 'rgba(255, 255, 255, 0.82)',
           boxShadow: '0 4px 14px rgba(15, 35, 75, 0.06)',
           display: 'grid',
-          gridTemplateColumns: shouldUseMobileLayout ? '1fr' : 'minmax(0, 1fr) auto minmax(0, 1fr)',
+          gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)',
+          '@container (max-width: 900px)': { gridTemplateColumns: '1fr', textAlign: 'center' },
           gap: '12px',
           alignItems: 'center',
           [NARROW_FOOTER_QUERY]: {
@@ -158,8 +103,8 @@ export function AppFooter() {
           },
         }}
       >
-        <Box sx={{ ...sectionSx, justifySelf: shouldUseMobileLayout ? 'center' : 'start' }}>
-          <Box component="span" sx={{ ...captionSx, whiteSpace: shouldUseMobileLayout ? 'normal' : 'nowrap' }}>
+        <Box sx={{ ...sectionSx, justifySelf: 'start', '@container (max-width: 900px)': { justifySelf: 'center' } }}>
+          <Box component="span" sx={{ ...captionSx, whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
             {CREATED_BY_LABEL}
           </Box>
           <Link href={BITRIX_LINK} target="_blank" rel="noreferrer" aria-label={BITRIX_ARIA_LABEL} sx={iconLinkSx}>
@@ -171,8 +116,8 @@ export function AppFooter() {
           BudgetBasket
         </Box>
 
-        <Box sx={{ ...sectionSx, justifySelf: shouldUseMobileLayout ? 'center' : 'end' }}>
-          <Box component="span" sx={{ ...captionSx, whiteSpace: shouldUseMobileLayout ? 'normal' : 'nowrap' }}>
+        <Box sx={{ ...sectionSx, justifySelf: 'end', '@container (max-width: 900px)': { justifySelf: 'center' } }}>
+          <Box component="span" sx={{ ...captionSx, whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
             {SUPPORT_LABEL}
           </Box>
           <Link href={MAX_CONTACT_LINK} target="_blank" rel="noreferrer" aria-label={MAX_ARIA_LABEL} sx={iconLinkSx}>
