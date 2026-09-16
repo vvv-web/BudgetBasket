@@ -131,7 +131,7 @@ function ImportDialog({ open, kind, departmentId, departments, catalog, onClose,
   return <Dialog open={open} onClose={onClose} fullWidth maxWidth="lg">
     <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
       <Typography component="span" variant="h6" sx={{ flex: 1, minWidth: 0 }}>Управление НСИ · {meta.title}</Typography>
-      <Stack direction="row" spacing={1}>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ width: { xs: '100%', sm: 'auto' } }}>
         <Button startIcon={<DownloadIcon />} variant="outlined" onClick={onDownloadTemplate}>Скачать шаблон</Button>
         <Button component="label" startIcon={<UploadFileIcon />} variant="contained" disabled={previewImport.isPending}>
           Импорт<input hidden type="file" accept=".xlsx" onChange={(event) => { const selected = event.target.files?.[0]; if (selected) { setFile(selected); setPreview(null); previewImport.mutate(selected); } event.target.value = ''; }} />
@@ -139,8 +139,8 @@ function ImportDialog({ open, kind, departmentId, departments, catalog, onClose,
       </Stack>
     </DialogTitle>
     <DialogContent dividers><Stack spacing={2}>
-      <Box><Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>Статьи и категории</Typography><Box sx={{ overflowX: 'auto' }}><Table size="small"><TableHead><TableRow><TableCell>{meta.article}</TableCell><TableCell>Категория</TableCell><TableCell>Объединение</TableCell><TableCell>Активна</TableCell><TableCell width={56} /></TableRow></TableHead><TableBody>
-        {rows.map((row) => <TableRow key={row.id}><TableCell><TextField size="small" fullWidth value={row.article} onChange={(event) => setRows((items) => items.map((item) => item.id === row.id ? { ...item, article: event.target.value } : item))} /></TableCell><TableCell><TextField size="small" fullWidth placeholder="Пусто — одноимённая, если нет других" value={row.category} onChange={(event) => setRows((items) => items.map((item) => item.id === row.id ? { ...item, category: event.target.value } : item))} /></TableCell><TableCell><TextField select size="small" fullWidth value={row.unit_id} onChange={(event) => setRows((items) => items.map((item) => item.id === row.id ? { ...item, unit_id: event.target.value } : item))}>{departments.map((department) => <MenuItem key={department.id} value={department.id}>{department.name}</MenuItem>)}</TextField></TableCell><TableCell><TextField select size="small" fullWidth value={row.is_active ? 'yes' : 'no'} onChange={(event) => setRows((items) => items.map((item) => item.id === row.id ? { ...item, is_active: event.target.value === 'yes' } : item))}><MenuItem value="yes">Да</MenuItem><MenuItem value="no">Нет</MenuItem></TextField></TableCell><TableCell><IconButton size="small" disabled={rows.length === 1} onClick={() => setRows((items) => items.filter((item) => item.id !== row.id))}><DeleteOutlineIcon fontSize="small" /></IconButton></TableCell></TableRow>)}
+      <Box><Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>Статьи и категории</Typography><Box className="catalog-manual-table" sx={{ overflowX: 'auto' }}><Table size="small"><TableHead><TableRow><TableCell>{meta.article}</TableCell><TableCell>Категория</TableCell><TableCell>Объединение</TableCell><TableCell>Активна</TableCell><TableCell width={56} /></TableRow></TableHead><TableBody>
+        {rows.map((row) => <TableRow key={row.id}><TableCell><TextField size="small" fullWidth label={meta.article} value={row.article} onChange={(event) => setRows((items) => items.map((item) => item.id === row.id ? { ...item, article: event.target.value } : item))} /></TableCell><TableCell><TextField size="small" fullWidth placeholder="Пусто — одноимённая, если нет других" label="Категория" value={row.category} onChange={(event) => setRows((items) => items.map((item) => item.id === row.id ? { ...item, category: event.target.value } : item))} /></TableCell><TableCell><TextField select size="small" fullWidth label="Объединение" value={row.unit_id} onChange={(event) => setRows((items) => items.map((item) => item.id === row.id ? { ...item, unit_id: event.target.value } : item))}>{departments.map((department) => <MenuItem key={department.id} value={department.id}>{department.name}</MenuItem>)}</TextField></TableCell><TableCell><TextField select size="small" fullWidth label="Активна" value={row.is_active ? 'yes' : 'no'} onChange={(event) => setRows((items) => items.map((item) => item.id === row.id ? { ...item, is_active: event.target.value === 'yes' } : item))}><MenuItem value="yes">Да</MenuItem><MenuItem value="no">Нет</MenuItem></TextField></TableCell><TableCell><IconButton size="small" disabled={rows.length === 1} onClick={() => setRows((items) => items.filter((item) => item.id !== row.id))}><DeleteOutlineIcon fontSize="small" /></IconButton></TableCell></TableRow>)}
       </TableBody></Table></Box><Button sx={{ mt: 1 }} startIcon={<AddIcon />} variant="outlined" onClick={() => setRows((items) => [...items, emptyManualRow(departmentId)])}>Добавить строку</Button></Box>
       {file && <Typography variant="body2" color="text.secondary">Файл: {file.name}</Typography>}
       {previewImport.isPending && <Typography color="text.secondary">Подготовка предварительного просмотра…</Typography>}
@@ -276,7 +276,7 @@ export default function CatalogsPage({ user }: { user: User }) {
   return <Stack spacing={2.5}>
     <Paper className="surface-pad"><Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ md: 'center' }} justifyContent="space-between">
       <Tabs value={kind} onChange={(_, value: CatalogKind) => setKind(value)}><Tab value="dds" label="Статьи ДДС" /><Tab value="invests" label="Инвест-проекты" /></Tabs>
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} flexWrap="wrap" useFlexGap sx={{ minWidth: 0 }}>
         <TextField select size="small" label="Объединение" value={departmentId} onChange={(event) => setDepartmentId(event.target.value)} sx={filterFieldSx(280)}>
           {departments.map((department) => <MenuItem key={department.id} value={department.id}>{department.name}</MenuItem>)}
         </TextField>
@@ -300,7 +300,7 @@ export default function CatalogsPage({ user }: { user: User }) {
     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
       Изменения в строках сохраняются сразу; во время редактирования нажмите Esc, чтобы отменить несохранённое изменение.
     </Typography>
-    <Box sx={{ overflowX: 'auto' }}><Table size="small"><TableHead><TableRow><TableCell>{meta.article} / категория</TableCell><TableCell>Уровень</TableCell><TableCell>Активна</TableCell>{(user.role === 'admin' || canManageCategories) && <TableCell>Действия</TableCell>}</TableRow></TableHead>
+    <Box sx={{ overflowX: 'auto' }}><Table size="small" sx={{ minWidth: 720 }}><TableHead><TableRow><TableCell>{meta.article} / категория</TableCell><TableCell>Уровень</TableCell><TableCell>Активна</TableCell>{(user.role === 'admin' || canManageCategories) && <TableCell>Действия</TableCell>}</TableRow></TableHead>
       <TableBody>{visibleArticles.map((article) => {
         const categories = visibleRows.filter((row) => row.article.id === article.id);
         return <Fragment key={article.id}>

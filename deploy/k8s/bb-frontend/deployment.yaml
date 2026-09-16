@@ -1,0 +1,57 @@
+# bb-frontend (BudgetBasket) — Фаза 3 MBO №2: первый stateless-сервис в k3s.
+# Применение (владелец, на acom-vps):
+#   KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl apply --dry-run=server -f deploy/k8s/bb-frontend/
+#   KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl apply -f deploy/k8s/bb-frontend/
+# Образ: нода — образ собирается на VPS и импортируется в containerd k3s (imagePullPolicy: IfNotPresent).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bb-frontend
+  namespace: budgetbasket
+  labels:
+    app.kubernetes.io/name: bb-frontend
+    app.kubernetes.io/part-of: budgetbasket
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bb-frontend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bb-frontend
+        app.kubernetes.io/part-of: budgetbasket
+    spec:
+      containers:
+        - name: frontend
+          image: bb-frontend:prod-1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              # nginx (root master): CHOWN — chown кэш-каталогов, SETUID/SETGID — смена пользователя воркеров,
+              # NET_BIND_SERVICE — bind порта 80. Проверено: без CHOWN контейнер падает
+              # `chown("/var/cache/nginx/client_temp", 101) failed (1: Operation not permitted)`.
+              add: ["NET_BIND_SERVICE", "CHOWN", "SETUID", "SETGID"]

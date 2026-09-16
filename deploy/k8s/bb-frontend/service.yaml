@@ -1,0 +1,19 @@
+# bb-frontend Service — паттерн B: только ClusterIP, наружу через хостовый nginx.
+# clusterIP 10.43.0.150 — закреплён из реестра (проверено в Фазе 2: хост -> ClusterIP работает).
+apiVersion: v1
+kind: Service
+metadata:
+  name: bb-frontend
+  namespace: budgetbasket
+  labels:
+    app.kubernetes.io/name: bb-frontend
+spec:
+  type: ClusterIP
+  clusterIP: 10.43.0.150
+  selector:
+    app.kubernetes.io/name: bb-frontend
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: http

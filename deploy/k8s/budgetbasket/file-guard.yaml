@@ -1,0 +1,159 @@
+# file-guard (BudgetBasket) — Фаза 4 MBO №2: антивирусный/валидационный шлюз в k3s.
+# Deployment + ClusterIP. Внутри — clamd/freshclam.
+# Базы ClamAV: CDN database.clamav.net регионально блокирует (403), поэтому базы кладёт
+#   initContainer с зеркала https://packages.microsoft.com/clamav/ + проверка sigtool (канон 14.09.2026).
+#   Базы живут в PVC (durable); freshclam на старте выключен (FILE_GUARD_CLAMAV_UPDATE_ON_START=false),
+#   чтобы не уходить в cooldown на заблокированный CDN. Обновление баз — отдельная задача.
+# Применение (владелец, на acom-vps):
+#   KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl apply --dry-run=server -f deploy/k8s/budgetbasket/file-guard.yaml
+#   KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl apply -f deploy/k8s/budgetbasket/file-guard.yaml
+# Образ: bb-file-guard:prod-1 собирается на VPS (context — корень репо) и импортируется в k3s.
+# ВАЖНО: в compose у сервиса был pids_limit: 128 — в Kubernetes per-pod pids limit через манифест
+#   не задаётся, параметр не переносится (ограничение платформы; отмечено в отчёте Ф4-2).
+apiVersion: v1
+kind: Service
+metadata:
+  name: file-guard
+  namespace: budgetbasket
+  labels:
+    app.kubernetes.io/name: file-guard
+    app.kubernetes.io/part-of: budgetbasket
+spec:
+  selector:
+    app.kubernetes.io/name: file-guard
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+# PVC для баз ClamAV: переживает рестарты и пересоздание пода, не перекачиваем базы каждый раз.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: file-guard-clamav
+  namespace: budgetbasket
+  labels:
+    app.kubernetes.io/name: file-guard
+    app.kubernetes.io/part-of: budgetbasket
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: file-guard
+  namespace: budgetbasket
+  labels:
+    app.kubernetes.io/name: file-guard
+    app.kubernetes.io/part-of: budgetbasket
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: file-guard
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: file-guard
+        app.kubernetes.io/part-of: budgetbasket
+    spec:
+      initContainers:
+        # Идемпотентный сидер баз ClamAV: если базы есть — выходим сразу; если нет — качаем
+        # с зеркала Microsoft и проверяем подпись sigtool. Не подтвердилась — exit 1 (под не стартует).
+        - name: clamav-seed
+          image: bb-file-guard:prod-1
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              cd /var/lib/clamav
+              ok=1
+              for f in main.cvd daily.cvd bytecode.cvd; do
+                [ -s "$f" ] || ok=0
+              done
+              if [ "$ok" = "1" ]; then
+                echo "[clamav-seed] базы уже на месте:"; ls -l *.cvd; exit 0
+              fi
+              echo "[clamav-seed] базы отсутствуют — качаем с зеркала Microsoft"
+              for f in main.cvd daily.cvd bytecode.cvd; do
+                curl -fSL --retry 3 --retry-delay 5 --max-time 900 \
+                  -o "$f.tmp" "https://packages.microsoft.com/clamav/$f"
+                if sigtool --info "$f.tmp" | grep -q "Verification OK"; then
+                  mv "$f.tmp" "$f"
+                  echo "[clamav-seed] $f: Verification OK"
+                else
+                  rm -f "$f.tmp"
+                  echo "[clamav-seed] $f: подпись НЕ подтверждена"; exit 1
+                fi
+              done
+              echo "[clamav-seed] базы готовы"
+          volumeMounts:
+            - name: clamav-db
+              mountPath: /var/lib/clamav
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+      containers:
+        - name: file-guard
+          image: bb-file-guard:prod-1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: bb-env
+          env:
+            # env поверх envFrom: freshclam на старте выключен (CDN заблокирован, cooldown);
+            # базы кладёт initContainer, clamd работает с ними.
+            - name: FILE_GUARD_CLAMAV_UPDATE_ON_START
+              value: "false"
+          volumeMounts:
+            # В compose был tmpfs /tmp:size=128m,noexec,nosuid,nodev → в k8s emptyDir в памяти.
+            - name: tmp
+              mountPath: /tmp
+            - name: clamav-db
+              mountPath: /var/lib/clamav
+          readinessProbe:
+            # /ready — как в compose-healthcheck сервиса.
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            # с запасом: внутри стартуют clamd/freshclam.
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 128Mi
+        - name: clamav-db
+          persistentVolumeClaim:
+            claimName: file-guard-clamav

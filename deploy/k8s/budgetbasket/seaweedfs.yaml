@@ -1,0 +1,130 @@
+# seaweedfs (BudgetBasket) — Фаза 4 MBO №2: S3-хранилище файлов в k3s.
+# Данные: PVC через volumeClaimTemplates (/data). НЕ emptyDir.
+# Команда 1:1 как в compose (args к /entrypoint.sh образа): server -dir=/data -s3 -s3.port=8333
+#   -filer -filer.port=8888 -master.port=9333 -volume.port=8080.
+# Образ: chrislusf/seaweedfs:latest — импортируется тот же docker-образ, что работает сейчас
+#   (диджест на VPS: chrislusf/seaweedfs@sha256:c7d6c721b30ae711db766bbbfd40192776e263d4e51e22f57baef7bef93c12c6).
+#   imagePullPolicy: IfNotPresent — свежий latest из registry не тянется.
+# Применение (владелец, на acom-vps):
+#   KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl apply --dry-run=server -f deploy/k8s/budgetbasket/seaweedfs.yaml
+#   KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl apply -f deploy/k8s/budgetbasket/seaweedfs.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: seaweedfs-headless
+  namespace: budgetbasket
+  labels:
+    app.kubernetes.io/name: seaweedfs
+    app.kubernetes.io/part-of: budgetbasket
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: seaweedfs
+  ports:
+    - name: s3
+      port: 8333
+      targetPort: s3
+    - name: filer
+      port: 8888
+      targetPort: filer
+    - name: master
+      port: 9333
+      targetPort: master
+---
+# Клиентский сервис: backend ходит на `http://seaweedfs:8333` (S3_ENDPOINT из .env — совпадает).
+apiVersion: v1
+kind: Service
+metadata:
+  name: seaweedfs
+  namespace: budgetbasket
+  labels:
+    app.kubernetes.io/name: seaweedfs
+    app.kubernetes.io/part-of: budgetbasket
+spec:
+  selector:
+    app.kubernetes.io/name: seaweedfs
+  ports:
+    - name: s3
+      port: 8333
+      targetPort: s3
+    - name: filer
+      port: 8888
+      targetPort: filer
+    - name: master
+      port: 9333
+      targetPort: master
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: seaweedfs
+  namespace: budgetbasket
+  labels:
+    app.kubernetes.io/name: seaweedfs
+    app.kubernetes.io/part-of: budgetbasket
+spec:
+  serviceName: seaweedfs-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: seaweedfs
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: seaweedfs
+        app.kubernetes.io/part-of: budgetbasket
+    spec:
+      containers:
+        - name: seaweedfs
+          image: chrislusf/seaweedfs:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - server
+            - -dir=/data
+            - -s3
+            - -s3.port=8333
+            - -filer
+            - -filer.port=8888
+            - -master.port=9333
+            - -volume.port=8080
+          ports:
+            - name: s3
+              containerPort: 8333
+            - name: filer
+              containerPort: 8888
+            - name: master
+              containerPort: 9333
+            - name: volume
+              containerPort: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            # HTTP-healthz SeaweedFS не подтверждён по доке — минимальная проверка: S3-порт слушает.
+            tcpSocket:
+              port: s3
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: master
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 5Gi

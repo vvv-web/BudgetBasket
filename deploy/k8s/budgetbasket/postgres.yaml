@@ -1,0 +1,107 @@
+# postgres (BudgetBasket) — Фаза 4 MBO №2: база данных в k3s.
+# Данные: PVC через volumeClaimTemplates (StorageClass local-path, WaitForFirstConsumer).
+# НЕ emptyDir: данные базы должны переживать пересоздание пода.
+# Секрет bb-env создаётся скриптом create-secrets.sh из /opt/budgetbasket/.env (в git не попадает).
+# Применение (владелец, на acom-vps):
+#   KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl apply --dry-run=server -f deploy/k8s/budgetbasket/postgres.yaml
+#   KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl apply -f deploy/k8s/budgetbasket/postgres.yaml
+# Образ: postgres:16 импортируется в containerd k3s из локального docker-образа (docker save | k3s ctr images import).
+# Зафиксированный диджест на VPS: postgres@sha256:78df81b1442dcc764c1104154da7162635e40cfffe67579c42a1c1b96dfc209c
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-headless
+  namespace: budgetbasket
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: budgetbasket
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: pg
+---
+# Обычный ClusterIP для клиентов (backend обращается к `postgres:5432` — DNS-имя совпадает с compose/.env).
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: budgetbasket
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: budgetbasket
+spec:
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: pg
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: budgetbasket
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: budgetbasket
+spec:
+  serviceName: postgres-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/part-of: budgetbasket
+    spec:
+      containers:
+        - name: postgres
+          # Тег как в compose; на ноде импортируется тот же docker-образ, что работает сейчас.
+          image: postgres:16
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: pg
+              containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: bb-env
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          # Без drop ALL: официальный entrypoint postgres делает chown/setuid (как в compose).
+          # Ужесточение прав — отдельной задачей после стабилизации (runAsUser и т.п.).
+          securityContext:
+            allowPrivilegeEscalation: false
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 5Gi

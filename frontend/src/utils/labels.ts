@@ -4,7 +4,7 @@ export const roleLabels: Record<Role, string> = {
   admin: 'Администратор',
   economist: 'Экономист',
   employee: 'Сотрудник',
-  approver: 'Согласующий',
+  approver: 'Проверяющий',
   zgd: 'ЗГД',
 };
 

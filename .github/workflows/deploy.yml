@@ -110,6 +110,15 @@ jobs:
           echo "TRIGGER=${{ github.event_name }}"
           echo "Automatic path: successful CI workflow_run on push to main."
           echo "Manual path: workflow_dispatch for rerun, rollback, or approved recovery."
+      - name: Prepare deploy evidence
+        run: |
+          mkdir -p deploy-evidence
+          {
+            echo "sha=${{ needs.gate-ci.outputs.sha }}"
+            echo "trigger=${{ github.event_name }}"
+            echo "run=${{ github.run_id }}"
+            echo "attempt=${{ github.run_attempt }}"
+          } > deploy-evidence/runner-context.txt
 
       - name: SSH update + post-deploy verify
         uses: appleboy/ssh-action@v1.2.0
@@ -122,6 +131,9 @@ jobs:
           script: |
             set -euo pipefail
             SHA="${{ needs.gate-ci.outputs.sha }}"
+            EVIDENCE_DIR="/tmp/budgetbasket-deploy-${{ github.run_id }}-${{ github.run_attempt }}"
+            mkdir -p "${EVIDENCE_DIR}"
+            exec > >(tee "${EVIDENCE_DIR}/remote-deploy.log") 2>&1
             ROOT="${DEPLOY_PATH:-/opt/budgetbasket}"
             export BUDGETBASKET_ENV_FILE="${BUDGETBASKET_ENV_FILE:-/etc/budgetbasket/.env}"
             export BUDGETBASKET_FQDN="${BUDGETBASKET_FQDN:-budgetbasket.acom-offer-desk.ru}"
@@ -144,7 +156,7 @@ jobs:
             git fetch --prune origin
             git cat-file -e "${SHA}^{commit}"
             git checkout --detach "${SHA}"
-            bash deploy/vps/remote-update.sh
+            bash deploy/vps/remote-update-k8s.sh "${SHA}"
             bash scripts/post-deploy-verify.sh
             if [[ -n "$(git status --porcelain)" ]]; then
               echo "FAIL: deploy changed tracked files in checkout" >&2
@@ -152,3 +164,31 @@ jobs:
               exit 1
             fi
             echo "DEPLOY_JOB_PASS SHA=$(git rev-parse HEAD)"
+      - name: Download deploy evidence
+        if: always()
+        continue-on-error: true
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_SSH_HOST }}
+          username: ${{ secrets.DEPLOY_SSH_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: 22
+          source: /tmp/budgetbasket-deploy-${{ github.run_id }}-${{ github.run_attempt }}/remote-deploy.log
+          target: deploy-evidence/
+          overwrite: true
+      - name: Mark deploy evidence collection
+        if: always()
+        run: |
+          if find deploy-evidence -type f -name 'remote-deploy.log' -print -quit | grep -q .; then
+            echo "remote_evidence=downloaded" >> deploy-evidence/runner-context.txt
+          else
+            echo "remote_evidence=unavailable" >> deploy-evidence/runner-context.txt
+          fi
+      - name: Upload deploy test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: deploy-evidence/
+          if-no-files-found: error
+          retention-days: 14

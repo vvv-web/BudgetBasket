@@ -2820,7 +2820,7 @@ class ApprovalService:
 
     def add_position_comment(self, user: dict, position_id: str, comment: str) -> dict:
         if user.get("role") not in {"approver", "zgd"}:
-            raise HTTPException(status_code=403, detail="Комментарий к статье ЦФО доступен согласующему и ЗГД")
+            raise HTTPException(status_code=403, detail="Комментарий к статье ЦФО доступен проверяющему и ЗГД")
         with self.repo.transaction() as repo:
             position = repo.lock_by_id("cfo_positions", position_id)
             if not position:
