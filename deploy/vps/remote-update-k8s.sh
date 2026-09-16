@@ -99,7 +99,8 @@ BB_FILE_GUARD="bb-file-guard:${TAG}"
 
 docker build -t "${BB_BACKEND}" backend
 docker build -f frontend/Dockerfile.prod --build-arg VITE_API_URL=/api -t "${BB_FRONTEND}" frontend
-docker build -t "${BB_FILE_GUARD}" file_guard
+# file_guard: контекст — корень репо (Dockerfile COPY file_guard/...), как в docker-compose.yml.
+docker build -f file_guard/Dockerfile -t "${BB_FILE_GUARD}" .
 
 # --- import into k3s containerd (no registry; imagePullPolicy IfNotPresent) ---
 for img in "${BB_BACKEND}" "${BB_FRONTEND}" "${BB_FILE_GUARD}"; do
