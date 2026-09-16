@@ -156,7 +156,7 @@ jobs:
             git fetch --prune origin
             git cat-file -e "${SHA}^{commit}"
             git checkout --detach "${SHA}"
-            bash deploy/vps/remote-update.sh
+            bash deploy/vps/remote-update-k8s.sh "${SHA}"
             bash scripts/post-deploy-verify.sh
             if [[ -n "$(git status --porcelain)" ]]; then
               echo "FAIL: deploy changed tracked files in checkout" >&2
