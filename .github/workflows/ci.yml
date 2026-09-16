@@ -25,6 +25,15 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare test evidence
+        run: |
+          mkdir -p test-artifacts
+          {
+            echo "job=backend"
+            echo "sha=${GITHUB_SHA}"
+            echo "run=${GITHUB_RUN_ID}"
+            echo "attempt=${GITHUB_RUN_ATTEMPT}"
+          } > test-artifacts/context.txt
 
       - uses: actions/setup-python@v5
         with:
@@ -41,15 +50,34 @@ jobs:
         # ponytail: one upstream test expects 400 on zgd step-edge, current app returns 200.
         # Do not rewrite product code on the ops fork; deselect until alexonderia aligns test↔code.
         # Ceiling: gate is weaker for that rule; upgrade = Sasha fixes test or restores validation.
-        run: >
-          python -m pytest -q
-          --deselect tests/test_approval_workflow.py::test_zgd_step_cannot_have_following_nodes
+        run: |
+          set -o pipefail
+          python -m pytest -q --junitxml=test-artifacts/backend-junit.xml \
+            --deselect tests/test_approval_workflow.py::test_zgd_step_cannot_have_following_nodes \
+            2>&1 | tee test-artifacts/backend-pytest.log
+      - name: Upload backend test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: backend/test-artifacts/
+          if-no-files-found: error
+          retention-days: 14
 
   file-guard:
     name: file_guard pytest
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare test evidence
+        run: |
+          mkdir -p file_guard/test-artifacts
+          {
+            echo "job=file-guard"
+            echo "sha=${GITHUB_SHA}"
+            echo "run=${GITHUB_RUN_ID}"
+            echo "attempt=${GITHUB_RUN_ATTEMPT}"
+          } > file_guard/test-artifacts/context.txt
 
       - name: Install libmagic (python-magic)
         run: sudo apt-get update && sudo apt-get install -y libmagic1
@@ -71,7 +99,18 @@ jobs:
         env:
           FILE_GUARD_ANTIVIRUS_ENABLED: "false"
           PYTHONPATH: ${{ github.workspace }}
-        run: python -m pytest file_guard/tests -q
+        run: |
+          set -o pipefail
+          python -m pytest file_guard/tests -q --junitxml=file_guard/test-artifacts/file-guard-junit.xml \
+            2>&1 | tee file_guard/test-artifacts/file-guard-pytest.log
+      - name: Upload file_guard test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: file-guard-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: file_guard/test-artifacts/
+          if-no-files-found: error
+          retention-days: 14
 
   frontend:
     name: Frontend build
@@ -81,6 +120,15 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare build evidence
+        run: |
+          mkdir -p test-artifacts
+          {
+            echo "job=frontend"
+            echo "sha=${GITHUB_SHA}"
+            echo "run=${GITHUB_RUN_ID}"
+            echo "attempt=${GITHUB_RUN_ATTEMPT}"
+          } > test-artifacts/context.txt
 
       - uses: actions/setup-node@v4
         with:
@@ -93,17 +141,54 @@ jobs:
 
       # MBO / goal gate: npm build. Vitest has upstream drift (roles.test vs roles.ts) — not fixed here (app owner).
       - name: production build
-        run: npm run build
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee test-artifacts/frontend-build.log
+      - name: Upload frontend build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            frontend/test-artifacts/
+            frontend/dist/
+          if-no-files-found: error
+          retention-days: 14
   deployment-guards:
     name: Deployment guards
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare guard evidence
+        run: |
+          mkdir -p test-artifacts
+          {
+            echo "job=deployment-guards"
+            echo "sha=${GITHUB_SHA}"
+            echo "run=${GITHUB_RUN_ID}"
+            echo "attempt=${GITHUB_RUN_ATTEMPT}"
+          } > test-artifacts/context.txt
       - name: Shell syntax
-        run: bash -n deploy/vps/verify-env.sh deploy/vps/remote-update.sh scripts/post-deploy-verify.sh scripts/selfcheck_deploy_env.sh scripts/selfcheck_vite_api_env.sh
+        run: |
+          set -o pipefail
+          bash -n deploy/vps/verify-env.sh deploy/vps/remote-update.sh scripts/post-deploy-verify.sh scripts/selfcheck_deploy_env.sh scripts/selfcheck_vite_api_env.sh 2>&1 | tee test-artifacts/shell-syntax.log
       - name: Production runtime patch applies
-        run: git apply --check deploy/vps/production-runtime.patch
+        run: |
+          set -o pipefail
+          git apply --check deploy/vps/production-runtime.patch 2>&1 | tee test-artifacts/runtime-patch.log
       - name: Environment contract self-check
-        run: bash scripts/selfcheck_deploy_env.sh
+        run: |
+          set -o pipefail
+          bash scripts/selfcheck_deploy_env.sh 2>&1 | tee test-artifacts/deploy-env-selfcheck.log
       - name: Vite API self-check
-        run: bash scripts/selfcheck_vite_api_env.sh
+        run: |
+          set -o pipefail
+          bash scripts/selfcheck_vite_api_env.sh 2>&1 | tee test-artifacts/vite-api-selfcheck.log
+      - name: Upload deployment guard evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-guards-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-artifacts/
+          if-no-files-found: error
+          retention-days: 14
