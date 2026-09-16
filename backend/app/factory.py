@@ -88,7 +88,7 @@ def create_app(*, repository: Repository | None = None, settings: Settings | Non
     app.state.excel_service = ExcelService(repository, permissions, request_service, app.state.file_service, export_dir, file_guard)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "https://budgetbasket.acom-offer-desk.ru", "http://budgetbasket.acom-offer-desk.ru"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
