@@ -73,25 +73,9 @@ git checkout --detach "${SHA}" --quiet
 git reset --hard "${SHA}" --quiet
 echo "TARGET_SHA=$(git rev-parse HEAD)"
 
-# --- build images on VPS (production-runtime.patch parity with the compose build) ---
-PATCH_FILE="${ROOT}/deploy/vps/production-runtime.patch"
-patch_applied=0
-cleanup_runtime_patch() {
-  if (( patch_applied == 1 )); then
-    if ! git apply --reverse --check "${PATCH_FILE}" \
-      || ! git apply --reverse "${PATCH_FILE}"; then
-      echo "FAIL: could not remove production runtime patch" >&2
-      return 1
-    fi
-    echo "OK production runtime patch removed from checkout"
-  fi
-}
-trap cleanup_runtime_patch EXIT
-
-git apply --check "${PATCH_FILE}"
-git apply "${PATCH_FILE}"
-patch_applied=1
-echo "OK production runtime patch applied for image build"
+# --- build images on VPS ---
+# production-runtime.patch больше НЕ применяется: CORS-домен внесён в backend/app/factory.py
+# (коммит в репо), остальные ханки патча были compose/dev-server эпохи и k8s-сборке не нужны.
 
 BB_BACKEND="bb-backend:${TAG}"
 BB_FRONTEND="bb-frontend:${TAG}"
@@ -107,8 +91,6 @@ for img in "${BB_BACKEND}" "${BB_FRONTEND}" "${BB_FILE_GUARD}"; do
   docker save "${img}" | k3s ctr images import -
   echo "OK imported into containerd: ${img}"
 done
-
-cleanup_runtime_patch || true
 
 # --- secrets + manifests ---
 bash "${ROOT}/deploy/k8s/budgetbasket/create-secrets.sh" "${ENV_FILE}"

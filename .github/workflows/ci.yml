@@ -172,10 +172,12 @@ jobs:
         run: |
           set -o pipefail
           bash -n deploy/vps/verify-env.sh deploy/vps/remote-update.sh scripts/post-deploy-verify.sh scripts/selfcheck_deploy_env.sh scripts/selfcheck_vite_api_env.sh 2>&1 | tee test-artifacts/shell-syntax.log
-      - name: Production runtime patch applies
+      - name: Production CORS origin committed
         run: |
           set -o pipefail
-          git apply --check deploy/vps/production-runtime.patch 2>&1 | tee test-artifacts/runtime-patch.log
+          # production-runtime.patch больше не применяется на деплое (CORS внесён в репо);
+          # инвариант: prod-домен присутствует в allow_origins образа bb-backend.
+          grep -F 'budgetbasket.acom-offer-desk.ru' backend/app/factory.py | tee test-artifacts/runtime-patch.log
       - name: Environment contract self-check
         run: |
           set -o pipefail
