@@ -582,7 +582,7 @@ export default function DashboardPage({ user }: { user: User }) {
                   Выберите статью для разбивки по ЦФО или ЦФО для разбивки по статьям
                 </Typography>
               </Box>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} className="dashboard-breakdown-controls">
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} useFlexGap className="dashboard-breakdown-controls">
                 <Tabs
                   value={breakdownDimension}
                   onChange={(_, nextDimension: 'article' | 'cfo') => {
@@ -603,6 +603,10 @@ export default function DashboardPage({ user }: { user: User }) {
                   getOptionLabel={(item) => item.name}
                   isOptionEqualToValue={(option, value) => option.id === value.id}
                   className="dashboard-breakdown-selection"
+                  slotProps={{
+                    popper: { sx: { minWidth: 'min(360px, calc(100vw - 32px))', maxWidth: 'calc(100vw - 32px)' } },
+                    listbox: { sx: { '& .MuiAutocomplete-option': { overflowWrap: 'anywhere' } } },
+                  }}
                   renderInput={(params) => (
                     <TextField
                       {...params}

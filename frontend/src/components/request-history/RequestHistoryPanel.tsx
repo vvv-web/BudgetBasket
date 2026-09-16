@@ -71,7 +71,7 @@ function historyVisualMeta(entry: RequestLog) {
 function actionDescription(entry: RequestLog, plural = false) {
   const decision = entry.log.decision || entry.log.changes?.status?.to;
   const role = entry.user?.role;
-  const reviewer = role === 'zgd' ? 'ЗГД' : role === 'economist' ? 'Экономист' : role === 'approver' ? 'Согласующий' : role === 'employee' ? 'Ответственный' : 'Участник';
+  const reviewer = role === 'zgd' ? 'ЗГД' : role === 'economist' ? 'Экономист' : role === 'approver' ? 'Проверяющий' : role === 'employee' ? 'Ответственный' : 'Участник';
   const suffix = plural ? 'строки' : 'строку';
   if (entry.log.action === 'economist_item_decided') {
     if (decision === 'approved') return `Экономист согласовал ${suffix}`;
@@ -83,7 +83,7 @@ function actionDescription(entry: RequestLog, plural = false) {
     if (decision === 'rejected') return `Ответственный ЦФО отклонил ${suffix}`;
   }
   if (entry.log.action === 'position_items_approved_at_step') {
-    return `Согласующий согласовал ${suffix}`;
+    return `Проверяющий согласовал ${suffix}`;
   }
   if (entry.log.action === 'position_returned') return `${reviewer} вернул ${plural ? 'строки' : 'позицию'} на доработку`;
   if (entry.log.action === 'position_sent_to_economist') return 'Ответственный ЦФО передал позицию экономисту';
@@ -103,7 +103,7 @@ function HistoryEntry({
   // Route UUIDs and timestamps are implementation details. For position
   // actions show only the business result (usually the status transition).
   const changes = entry.source === 'cfo_position'
-    ? allChanges.filter((change) => ['Статус', 'Утверждённая сумма', 'Фиксация бюджета', 'Решение согласующего'].includes(change.field))
+    ? allChanges.filter((change) => ['Статус', 'Утверждённая сумма', 'Фиксация бюджета', 'Решение проверяющего'].includes(change.field))
     : allChanges;
   const isLineChange = !!entry.subject;
   const visual = historyVisualMeta(entry);

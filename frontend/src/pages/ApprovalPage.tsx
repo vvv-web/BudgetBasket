@@ -1455,7 +1455,7 @@ function ApprovalGraph({
                             }
                           }}
                         >
-                          <ApprovalAssigneeDisplay label="Согласующий" user={step.user} />
+                          <ApprovalAssigneeDisplay label="Проверяющий" user={step.user} />
                         </Box>
                         {canEdit && openReviewerStepId === step.id && (
                           <Paper className="approval-reviewer-select-menu" elevation={6}>
@@ -1932,7 +1932,7 @@ function AdminApprovalPage({ viewerUserId }: { viewerUserId: string }) {
                 </MenuItem>
               ))}
             </TextField>
-            {!dialogUsers.length && <Alert severity="warning">Сначала создайте пользователя с ролью «Согласующий».</Alert>}
+            {!dialogUsers.length && <Alert severity="warning">Сначала создайте пользователя с ролью «Проверяющий».</Alert>}
           </Stack>
         </DialogContent>
         <DialogActions>
