@@ -1,0 +1,78 @@
+# backend (BudgetBasket) — Фаза 4 MBO №2: FastAPI в k3s.
+# Deployment: stateless; состояние — в postgres и seaweedfs.
+# Команда старта 1:1 как в compose: alembic upgrade head && uvicorn (порт APP_PORT=8000 из .env/секрета).
+# Применение (владелец, на acom-vps):
+#   KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl apply --dry-run=server -f deploy/k8s/budgetbasket/backend.yaml
+#   KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl apply -f deploy/k8s/budgetbasket/backend.yaml
+# Образ: bb-backend:prod-1 собирается на VPS из backend/Dockerfile и импортируется в containerd k3s.
+apiVersion: v1
+kind: Service
+metadata:
+  name: bb-backend
+  namespace: budgetbasket
+  labels:
+    app.kubernetes.io/name: bb-backend
+    app.kubernetes.io/part-of: budgetbasket
+spec:
+  selector:
+    app.kubernetes.io/name: bb-backend
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bb-backend
+  namespace: budgetbasket
+  labels:
+    app.kubernetes.io/name: bb-backend
+    app.kubernetes.io/part-of: budgetbasket
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bb-backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bb-backend
+        app.kubernetes.io/part-of: budgetbasket
+    spec:
+      containers:
+        - name: backend
+          image: bb-backend:prod-1
+          imagePullPolicy: IfNotPresent
+          # shell-форма сохраняет подстановку ${APP_HOST}/${APP_PORT} из env, как в compose.
+          command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host ${APP_HOST} --port ${APP_PORT}"]
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: bb-env
+          readinessProbe:
+            # /health/db проверяет доступность БД — readiness обязан её отражать.
+            httpGet:
+              path: /health/db
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            # /health — только живость процесса (миграции/БД могут быть недоступны, под не убиваем).
+            httpGet:
+              path: /health
+              port: http
+            # initialDelaySeconds с запасом: при старте выполняется alembic upgrade head.
+            initialDelaySeconds: 40
+            periodSeconds: 20
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false

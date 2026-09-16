@@ -1,0 +1,11 @@
+# kustomization Фазы 4 (BudgetBasket): применяется с VPS:
+#   KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl apply -k deploy/k8s/budgetbasket/
+# Secret bb-env НЕ включён: создаётся из /opt/budgetbasket/.env скриптом create-secrets.sh (значения не в git).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: budgetbasket
+resources:
+  - postgres.yaml
+  - seaweedfs.yaml
+  - backend.yaml
+  - file-guard.yaml
