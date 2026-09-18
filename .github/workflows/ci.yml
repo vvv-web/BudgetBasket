@@ -203,6 +203,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Trivy treats requirements.txt as direct deps only; install into a venv so
+      # site-packages METADATA covers transitive pip packages (starlette, urllib3, …).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python deps for CVE scan
+        run: |
+          python -m venv .cve-scan-venv
+          . .cve-scan-venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt -r file_guard/requirements.txt
+
       # Official Aqua scanner image pinned by tag+digest (supply-chain practice:
       # a mutable tag can be repointed, a digest cannot). Runs the scanner directly
       # instead of via aquasecurity/trivy-action: its setup-trivy installer fails
@@ -212,6 +225,6 @@ jobs:
       # Docs: https://trivy.dev/latest/docs/references/configuration/cli/trivy_filesystem/
       - name: Trivy fs scan (fail on HIGH/CRITICAL)
         run: |
-          docker run --rm -v "$PWD:/w" \
+          docker run --rm -v "$PWD:/w" -e VIRTUAL_ENV=/w/.cve-scan-venv \
             aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e \
             fs --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 /w
