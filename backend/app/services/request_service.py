@@ -2700,6 +2700,11 @@ class RequestService:
             position_rows = position_items(position["id"])
             if not position_rows or all(row.get("fixed") for row in position_rows):
                 return False
+            # A fully rejected position has nothing to hand to the economist.
+            # Keep the submit action out of the register so the CFO sees the
+            # review completion action instead of a 409 on the green check.
+            if not any(row.get("status") != ItemStatus.rejected for row in position_rows):
+                return False
             # The handoff belongs to the whole CFO position, not to an
             # individual line.  A line returned to the module, or a line
             # that has not received a current CFO decision yet, must keep the

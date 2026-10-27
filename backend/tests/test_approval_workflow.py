@@ -3006,3 +3006,48 @@ def test_economist_cannot_complete_a_fully_rejected_position(tmp_path):
     assert blocked.status_code == 409, blocked.text
     assert blocked.json()["detail"] == "В позиции нет строк для согласования"
 
+
+def test_fully_rejected_cfo_position_hides_submit_and_offers_completion(tmp_path):
+    client = make_client(tmp_path)
+    employee = auth(client, "employee", "employee")
+    request, items = create_submitted_request(client, employee, item_count=1)
+
+    decided = client.post(
+        f"/items/{items[0]['id']}/cfo-decision",
+        json={"decision": "rejected", "comment": "Не согласовано"},
+        headers=employee,
+    )
+    assert decided.status_code == 200, decided.text
+
+    rows = client.get(
+        "/approval-register/rows",
+        params={"request_id": request["id"]},
+        headers=employee,
+    ).json()["items"]
+    row = next(row for row in rows if row["id"] == items[0]["id"])
+    position_id = row["position_id"]
+    assert position_id
+    assert row["status"] == "rejected"
+    # The green submit action must disappear: there is nothing to send to the
+    # economist, and the backend already rejects this handoff with 409.
+    assert row["is_position_submission_actionable"] is False, row
+    # The correct action is the CFO review completion, which closes the
+    # fully rejected request instead of masking it behind the submit action.
+    assert row["is_cfo_review_completable"] is True, row
+
+    blocked = client.post(
+        f"/cfo-positions/{position_id}/submit-to-economist",
+        json={"comment": "Передать"},
+        headers=employee,
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert blocked.json()["detail"] == "В позиции нет строк для согласования"
+
+    completed = client.post(
+        f"/requests/{request['id']}/complete-cfo-review",
+        headers=employee,
+    )
+    assert completed.status_code == 200, completed.text
+    updated = client.get(f"/requests/{request['id']}", headers=employee).json()
+    assert updated["status"] == "rejected"
+
